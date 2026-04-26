@@ -56,7 +56,11 @@ def test_renderer_shows_phase_actions_pending_and_discard_pressure() -> None:
     )
     game.state.phase = GamePhase.DISCARD
 
-    rendered = render_observation(game.observation_for("P1"), game.legal_actions("P1"))
+    rendered = render_observation(
+        game.observation_for("P1"),
+        game.legal_actions("P1"),
+        include_legal_actions=True,
+    )
 
     assert "Phase: discard" in rendered
     assert "Actions left:" in rendered
