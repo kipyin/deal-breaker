@@ -58,10 +58,27 @@ def resolve_action(state: GameState, player_id: str, action: Action) -> StepResu
 
     if isinstance(action, EndTurn):
         if (
-            state.phase == GamePhase.ACTION
+            state.phase == GamePhase.DISCARD
             and len(state.players[player_id].hand) > state.rules.hand_limit
         ):
             return _reject(state, player_id, action, "must discard down to hand limit")
+        if (
+            state.phase == GamePhase.ACTION
+            and len(state.players[player_id].hand) > state.rules.hand_limit
+        ):
+            state.phase = GamePhase.DISCARD
+            return StepResult(
+                accepted=True,
+                events=[
+                    GameEvent(
+                        type="discard_required",
+                        turn=state.turn,
+                        player=player_id,
+                        action="end_turn",
+                        reason_summary="Player must discard down to the hand limit.",
+                    )
+                ],
+            )
         event = GameEvent(
             type="turn_ended",
             turn=state.turn,
@@ -187,6 +204,8 @@ def _resolve_draw(state: GameState, player_id: str) -> StepResult:
 def _resolve_discard(state: GameState, player_id: str, action: DiscardCard) -> StepResult:
     if state.phase != GamePhase.DISCARD:
         return _reject(state, player_id, action, "not in discard phase")
+    if len(state.players[player_id].hand) <= state.rules.hand_limit:
+        return _reject(state, player_id, action, "hand is already at or below limit")
     player, card = state.players[player_id].remove_from_hand(action.card_id)
     if card is None:
         return _reject(state, player_id, action, "card not in hand")

@@ -87,9 +87,6 @@ class GameState:
     def next_phase_after_action(self) -> GamePhase:
         if self.winner_id is not None:
             return GamePhase.GAME_OVER
-        current = self.players[self.current_player_id]
-        if len(current.hand) > self.rules.hand_limit:
-            return GamePhase.DISCARD
         if self.actions_taken >= self.rules.actions_per_turn:
             return GamePhase.DISCARD
         return GamePhase.ACTION

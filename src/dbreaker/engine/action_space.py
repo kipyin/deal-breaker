@@ -54,10 +54,9 @@ def legal_actions(state: GameState, player_id: str) -> list[Action]:
 
     player = state.players[player_id]
     if state.phase == GamePhase.DISCARD:
-        discard_actions: list[Action] = [DiscardCard(card_id=card.id) for card in player.hand]
         if len(player.hand) <= state.rules.hand_limit:
-            discard_actions.append(EndTurn())
-        return discard_actions
+            return [EndTurn()]
+        return [DiscardCard(card_id=card.id) for card in player.hand]
 
     actions: list[Action] = []
     actions_left = state.rules.actions_per_turn - state.actions_taken

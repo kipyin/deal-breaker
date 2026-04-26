@@ -1,4 +1,4 @@
-from dbreaker.engine.actions import BankCard, DrawCards, EndTurn, PlayProperty
+from dbreaker.engine.actions import BankCard, DiscardCard, DrawCards, EndTurn, PlayProperty
 from dbreaker.engine.cards import Card, CardKind, PropertyColor
 from dbreaker.engine.game import Game
 from dbreaker.engine.rules import GamePhase, RuleConfig
@@ -17,6 +17,78 @@ def test_basic_turn_flow_records_events_and_advances_player() -> None:
     assert game.state.current_player_id == "P2"
     assert game.state.players["P1"].bank[0].id == "money-1"
     assert [event.type for event in game.event_log][-2:] == ["card_banked", "turn_ended"]
+
+
+def test_over_limit_hand_can_continue_until_actions_are_done() -> None:
+    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(7)]
+    game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
+    game.state.deck = [
+        Card(id="draw-1", name="$1", kind=CardKind.MONEY, value=1),
+        Card(id="draw-2", name="$1", kind=CardKind.MONEY, value=1),
+    ]
+
+    game.step("P1", DrawCards())
+    assert game.state.phase is GamePhase.ACTION
+    assert game.observation_for("P1").discard_required == 2
+    assert not any(isinstance(action, DiscardCard) for action in game.legal_actions("P1"))
+
+    game.step("P1", BankCard(card_id="money-0"))
+
+    assert game.state.phase is GamePhase.ACTION
+    assert game.observation_for("P1").actions_left == 2
+    assert not any(isinstance(action, DiscardCard) for action in game.legal_actions("P1"))
+
+
+def test_ending_turn_over_hand_limit_enters_discard_phase() -> None:
+    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(8)]
+    game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
+    game.state.phase = GamePhase.ACTION
+
+    result = game.step("P1", EndTurn())
+
+    assert result.accepted is True
+    assert game.state.current_player_id == "P1"
+    assert game.state.phase is GamePhase.DISCARD
+    assert not any(isinstance(action, EndTurn) for action in game.legal_actions("P1"))
+
+    game.step("P1", DiscardCard(card_id="money-0"))
+
+    assert game.state.current_player_id == "P2"
+
+
+def test_discard_phase_at_hand_limit_only_allows_end_turn() -> None:
+    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(7)]
+    game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
+    game.state.phase = GamePhase.ACTION
+    game.state.actions_taken = game.state.rules.actions_per_turn
+    game.state.phase = game.state.next_phase_after_action()
+
+    legal_actions = game.legal_actions("P1")
+
+    assert legal_actions == [EndTurn()]
+
+    discard_result = game.step("P1", DiscardCard(card_id="money-0"))
+
+    assert discard_result.accepted is False
+    assert game.state.current_player_id == "P1"
+    assert game.state.phase is GamePhase.DISCARD
+
+
+def test_discard_phase_rejects_end_turn_until_hand_limit_is_met() -> None:
+    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(8)]
+    game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
+    game.state.phase = GamePhase.DISCARD
+
+    end_result = game.step("P1", EndTurn())
+
+    assert end_result.accepted is False
+    assert game.state.current_player_id == "P1"
+    assert game.state.phase is GamePhase.DISCARD
+
+    discard_result = game.step("P1", DiscardCard(card_id="money-0"))
+
+    assert discard_result.accepted is True
+    assert game.state.current_player_id == "P2"
 
 
 def test_player_wins_after_completing_required_property_sets() -> None:
