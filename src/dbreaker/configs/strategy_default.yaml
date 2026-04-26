@@ -1,0 +1,9 @@
+strategies:
+  default: basic
+  available:
+    - random
+    - basic
+    - aggressive
+    - defensive
+    - set_completion
+    - omniscient

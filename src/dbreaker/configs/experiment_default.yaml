@@ -1,0 +1,8 @@
+experiment:
+  players: 4
+  games: 1000
+  strategies:
+    - random
+    - basic
+    - aggressive
+    - defensive
