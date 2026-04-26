@@ -1,0 +1,10 @@
+rules:
+  allow_just_say_no_chain: true
+  rent_with_wild_property: official
+  property_rearrange_timing: before_action
+  starting_hand_size: 5
+  draw_count: 2
+  empty_hand_draw_count: 5
+  hand_limit: 7
+  actions_per_turn: 3
+  sets_to_win: 3
