@@ -1,8 +1,10 @@
 import pytest
+from questionary import Choice
 
 from dbreaker.cli.prompts import (
     COMMAND_HELP_SENTINEL,
     COMMAND_SENTINEL,
+    _can_use_questionary_shortcuts,
     build_action_choices,
     resolve_action_selection,
 )
@@ -26,6 +28,15 @@ def test_build_action_choices_use_card_names_when_provided() -> None:
     choices = build_action_choices(actions, name_by_id={"money-1": "$1"})
 
     assert choices[0].title == "1. Bank $1 [money-1]"
+
+
+def test_questionary_shortcuts_disabled_for_large_menus() -> None:
+    assert _can_use_questionary_shortcuts(
+        [Choice(title=str(i), value=i) for i in range(36)]
+    )
+    assert not _can_use_questionary_shortcuts(
+        [Choice(title=str(i), value=i) for i in range(37)]
+    )
 
 
 def test_resolve_action_selection_returns_selected_action() -> None:
