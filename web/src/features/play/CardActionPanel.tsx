@@ -6,6 +6,7 @@ type Props = {
   actions: LegalAction[];
   onChoose: (payload: JsonObject) => void;
   onDismiss: () => void;
+  onViewDetails?: () => void;
   disabled?: boolean;
 };
 
@@ -29,12 +30,13 @@ function choiceHint(payload: JsonObject): string {
   }
 }
 
-/** Inline card actions below the hand (not a floating popover). */
+/** Context menu anchored above the selected hand card. */
 export function CardActionPanel({
   card,
   actions,
   onChoose,
   onDismiss,
+  onViewDetails,
   disabled,
 }: Props) {
   const label = cardLabel(card);
@@ -42,7 +44,7 @@ export function CardActionPanel({
   return (
     <section
       className="card-action-panel"
-      role="region"
+      role="menu"
       aria-label={`Actions for ${label}`}
     >
       <div className="card-action-panel__header">
@@ -65,6 +67,7 @@ export function CardActionPanel({
               <button
                 type="button"
                 className="card-action-panel__btn"
+                role="menuitem"
                 disabled={disabled}
                 onClick={() => {
                   onChoose(action.payload);
@@ -78,8 +81,20 @@ export function CardActionPanel({
           ))}
         </ul>
       )}
+      {onViewDetails ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="card-action-panel__btn card-action-panel__btn--details"
+          onClick={onViewDetails}
+        >
+          <span className="card-action-panel__hint">Inspect</span>
+          <span className="card-action-panel__label">View card details</span>
+        </button>
+      ) : null}
       <button
         type="button"
+        role="menuitem"
         className="card-action-panel__cancel pixel-button pixel-button--secondary"
         onClick={onDismiss}
       >

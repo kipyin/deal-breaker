@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { InspectorState, JsonObject, LegalAction } from "../../api/types";
-import { ActionZone } from "./ActionZone";
+import type { InspectorCard, InspectorOpponent, InspectorState, JsonObject, LegalAction } from "../../api/types";
+import { BoardCenter } from "./BoardCenter";
+import { CardDetailOverlay } from "./CardDetailOverlay";
 import { OpponentSeat } from "./OpponentSeat";
-import { PileZone } from "./PileZone";
+import { OpponentDetailOverlay, type OpponentDetail } from "./OpponentDetailOverlay";
 import { PlayerHandDock, PlayerTableState } from "./PlayerArea";
 import { TableFrame } from "./TableFrame";
 import {
@@ -39,6 +40,8 @@ export function PlayTable({
   flashMessage,
 }: PlayTableProps) {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [detailCard, setDetailCard] = useState<InspectorCard | null>(null);
+  const [opponentDetail, setOpponentDetail] = useState<OpponentDetail | null>(null);
   const viewer = state?.viewer;
 
   const all = state?.legal_actions ?? [];
@@ -77,6 +80,8 @@ export function PlayTable({
 
   useEffect(() => {
     setSelectedCardId(null);
+    setDetailCard(null);
+    setOpponentDetail(null);
   }, [state?.version, viewer?.player_id]);
 
   useEffect(() => {
@@ -91,7 +96,6 @@ export function PlayTable({
     return (
       <TableFrame>
         <div className="play-table__inner play-table__inner--loading">
-          <p className="play-table__brand play-table__brand--solo">PIXEL PROPERTY DEAL</p>
           <div className="play-table__empty">Loading live table…</div>
         </div>
       </TableFrame>
@@ -106,16 +110,26 @@ export function PlayTable({
     ? viewer.hand.find((card) => card.id === selectedCardId) ?? null
     : null;
 
+  function showOpponentBank(opponent: InspectorOpponent) {
+    setOpponentDetail({
+      kind: "bank",
+      opponentName: opponent.name || opponent.id,
+      cards: opponent.bank ?? [],
+    });
+  }
+
+  function showOpponentProperties(opponent: InspectorOpponent) {
+    setOpponentDetail({
+      kind: "properties",
+      opponentName: opponent.name || opponent.id,
+      properties: opponent.properties,
+    });
+  }
+
   return (
     <TableFrame>
       <div className="play-table__inner play-table__inner--prototype" data-table>
         <header className="play-surface__hud">
-          <div className="play-logo" aria-label="Game logo">
-            <span className="play-logo__full">PIXEL PROPERTY DEAL</span>
-            <span>PIXEL</span>
-            <strong>PROPERTY DEAL</strong>
-          </div>
-
           <div className={`play-turn-banner${humanTurn ? " play-turn-banner--you" : ""}`} role="status">
             <span>{humanTurn ? "YOUR TURN" : "AI TURN"}</span>
             <small>
@@ -125,35 +139,27 @@ export function PlayTable({
           </div>
         </header>
 
-        <div className="play-command-center">
-          <section className="play-table-state" aria-label="Table state">
-            <section className="play-opponents" aria-label="Opponent seats">
-              {opponents.length > 0 ? (
-                opponents.map((opponent, index) => (
-                  <OpponentSeat
-                    key={opponent.id}
-                    opponent={opponent}
-                    activePlayerId={state.active_player_id}
-                    seatIndex={index}
-                  />
-                ))
-              ) : (
-                <EmptySlot label="No opponents in snapshot" />
-              )}
-            </section>
-
-            <div className="play-center-row">
-              <PileZone
-                state={state}
-                onDraw={drawPileAction}
-                drawEnabled={drawEnabled}
-              />
-              <PlayerTableState viewer={viewer} />
-            </div>
+        <section className="play-board" aria-label="Card table">
+          <section className="play-opponents" aria-label="Opponent seats" data-opponent-count={opponents.length}>
+            {opponents.length > 0 ? (
+              opponents.map((opponent, index) => (
+                <OpponentSeat
+                  key={opponent.id}
+                  opponent={opponent}
+                  activePlayerId={state.active_player_id}
+                  seatIndex={index}
+                  onShowBank={showOpponentBank}
+                  onShowProperties={showOpponentProperties}
+                />
+              ))
+            ) : (
+              <EmptySlot label="No opponents in snapshot" />
+            )}
           </section>
 
-          <section className="play-command-rail" aria-label="Command rail">
-            <ActionZone
+          <div className="play-board__middle">
+            <PlayerTableState viewer={viewer} />
+            <BoardCenter
               state={state}
               legalActions={zoneActions}
               onChoose={onChoose}
@@ -161,18 +167,32 @@ export function PlayTable({
               readOnly={readOnly}
               flashMessage={flashMessage}
               handActionsHint={selectedCard ? null : handActionsHint}
-              selectedCard={readOnly ? null : selectedCard}
-              actionsForSelectedCard={readOnly ? [] : actionsForSelected}
-              onClearSelectedCard={readOnly ? undefined : () => setSelectedCardId(null)}
+              onDraw={drawPileAction}
+              drawEnabled={drawEnabled}
             />
-          </section>
-        </div>
+          </div>
+        </section>
 
         <PlayerHandDock
           viewer={viewer}
           selectedCardId={readOnly ? null : selectedCardId}
           onSelectHandCard={readOnly ? undefined : (id) => setSelectedCardId(id)}
+          selectedCardActions={readOnly ? [] : actionsForSelected}
+          onChooseCardAction={readOnly ? undefined : onChoose}
+          onViewCardDetails={
+            readOnly || !selectedCard
+              ? undefined
+              : () => {
+                  setDetailCard(selectedCard);
+                }
+          }
+          cardActionsDisabled={readOnly || !playerCanAct}
         />
+
+        {detailCard ? <CardDetailOverlay card={detailCard} onClose={() => setDetailCard(null)} /> : null}
+        {opponentDetail ? (
+          <OpponentDetailOverlay detail={opponentDetail} onClose={() => setOpponentDetail(null)} />
+        ) : null}
       </div>
     </TableFrame>
   );

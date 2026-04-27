@@ -37,7 +37,7 @@ export function PileZone({ state, onDraw, drawEnabled }: Props) {
   );
 
   return (
-    <div className="pile-zone" aria-label="Draw and discard piles">
+    <div className="pile-zone" aria-label="Draw and discard piles" data-layout="side-by-side">
       {drawInteractive ? (
         <button
           type="button"

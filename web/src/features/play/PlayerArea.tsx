@@ -1,4 +1,6 @@
-import type { InspectorViewer } from "../../api/types";
+import type { CSSProperties } from "react";
+import type { InspectorViewer, JsonObject, LegalAction } from "../../api/types";
+import { CardActionPanel } from "./CardActionPanel";
 import { cardLabel } from "./playUtils";
 import { PlayCard } from "./PlayCard";
 import { formatColor, formatMoney, propertyEntries, sumCardValues } from "./playUtils";
@@ -46,6 +48,10 @@ type HandDockProps = {
   viewer: InspectorViewer;
   selectedCardId?: string | null;
   onSelectHandCard?: (cardId: string | null) => void;
+  selectedCardActions?: LegalAction[];
+  onChooseCardAction?: (payload: JsonObject) => void;
+  onViewCardDetails?: () => void;
+  cardActionsDisabled?: boolean;
 };
 
 export function PlayerTableState({ viewer }: Props) {
@@ -92,6 +98,10 @@ export function PlayerHandDock({
   viewer,
   selectedCardId,
   onSelectHandCard,
+  selectedCardActions = [],
+  onChooseCardAction,
+  onViewCardDetails,
+  cardActionsDisabled,
 }: HandDockProps) {
   const hand = viewer.hand;
   const n = hand.length;
@@ -106,15 +116,30 @@ export function PlayerHandDock({
           aria-label="Your hand"
           data-hand-count={n}
           data-hand-dense={n > 4 ? "true" : undefined}
+          data-hand-spread="fan"
         >
-          {hand.map((card) => {
+          {hand.map((card, index) => {
             const id = card.id ?? "";
             const key = String(id || cardLabel(card));
             const isSel = Boolean(id && selectedCardId === id);
+            const center = (n - 1) / 2;
+            const fanY = Math.abs(index - center) * (n > 6 ? 4 : 7);
+            const itemStyle = {
+              "--play-card-fan-index": String(index),
+              "--play-card-fan-total": String(n),
+              "--play-card-fan-y": `${fanY}px`,
+            } as CSSProperties;
             return (
-              <div key={key} className="play-hand__item" role="listitem">
+              <div
+                key={key}
+                className={`play-hand__item${isSel ? " play-hand__item--selected" : ""}`}
+                role="listitem"
+                style={itemStyle}
+              >
                 <PlayCard
                   card={card}
+                  fanIndex={index}
+                  fanTotal={n}
                   interactive={Boolean(onSelectHandCard && id)}
                   selected={isSel}
                   onActivate={() => {
@@ -122,6 +147,16 @@ export function PlayerHandDock({
                     onSelectHandCard(isSel ? null : id);
                   }}
                 />
+                {isSel && onChooseCardAction && onSelectHandCard && onViewCardDetails ? (
+                  <CardActionPanel
+                    card={card}
+                    actions={selectedCardActions}
+                    onChoose={onChooseCardAction}
+                    onDismiss={() => onSelectHandCard(null)}
+                    onViewDetails={onViewCardDetails}
+                    disabled={cardActionsDisabled}
+                  />
+                ) : null}
               </div>
             );
           })}

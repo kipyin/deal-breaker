@@ -38,6 +38,7 @@ const playableState: InspectorState = {
       id: "P2",
       name: "AI Broker",
       hand_size: 4,
+      bank: [{ id: "opp_money_3", name: "$3M", kind: "money", value: 3 }],
       bank_value: 3,
       completed_sets: 0,
       properties: {
@@ -192,6 +193,10 @@ const densePlayUiStressState: InspectorState = {
       id: "P2",
       name: "Long Named Opportunistic Investor Bot",
       hand_size: 9,
+      bank: [
+        { id: "opp_money_10", name: "$10M", kind: "money", value: 10 },
+        { id: "opp_money_4", name: "$4M", kind: "money", value: 4 },
+      ],
       bank_value: 14,
       completed_sets: 1,
       properties: {
@@ -209,6 +214,7 @@ const densePlayUiStressState: InspectorState = {
       id: "P3",
       name: "Another Very Long Rival Name",
       hand_size: 7,
+      bank: [{ id: "opp_money_8", name: "$8M", kind: "money", value: 8 }],
       bank_value: 8,
       completed_sets: 0,
       properties: {
@@ -262,6 +268,7 @@ const fivePlayerState: InspectorState = {
       id: "P2",
       name: "Rival Two",
       hand_size: 3,
+      bank: [{ id: "rival_two_money", name: "$1M", kind: "money", value: 1 }],
       bank_value: 1,
       completed_sets: 0,
       properties: {
@@ -272,6 +279,7 @@ const fivePlayerState: InspectorState = {
       id: "P3",
       name: "Rival Three",
       hand_size: 4,
+      bank: [{ id: "rival_three_money", name: "$2M", kind: "money", value: 2 }],
       bank_value: 2,
       completed_sets: 0,
       properties: {},
@@ -280,6 +288,7 @@ const fivePlayerState: InspectorState = {
       id: "P4",
       name: "Rival Four",
       hand_size: 2,
+      bank: [],
       bank_value: 0,
       completed_sets: 0,
       properties: {},
@@ -288,6 +297,7 @@ const fivePlayerState: InspectorState = {
       id: "P5",
       name: "Rival Five",
       hand_size: 5,
+      bank: [{ id: "rival_five_money", name: "$3M", kind: "money", value: 3 }],
       bank_value: 3,
       completed_sets: 1,
       properties: {},
@@ -322,6 +332,7 @@ const viewerP1CurrentButP2Responds: InspectorState = {
       id: "P2",
       name: "AI Broker",
       hand_size: 2,
+      bank: [],
       bank_value: 0,
       completed_sets: 0,
       properties: {},
@@ -359,15 +370,15 @@ describe("PlayTable", () => {
 
     const table = screen.getByRole("region", { name: "Prototype play table" });
     expect(within(table).getByText("AI TURN")).toBeInTheDocument();
-    const zone = within(table).getByLabelText("Action zone");
-    expect(within(zone).getByText("AI is resolving the table.")).toBeInTheDocument();
+    const controls = within(table).getByLabelText("Board controls");
+    expect(within(controls).getByText("AI is resolving the table.")).toBeInTheDocument();
 
-    fireEvent.click(within(zone).getByRole("button", { name: /RUN AI UNTIL YOUR TURN/i }));
+    fireEvent.click(within(controls).getByRole("button", { name: /RUN AI UNTIL YOUR TURN/i }));
     expect(onRunAi).toHaveBeenCalled();
     expect(onChoose).not.toHaveBeenCalled();
   });
 
-  test("renders command-center landmarks, pile mapping, and primary actions", () => {
+  test("renders board-first landmarks, pile mapping, and primary actions", () => {
     const onChoose = vi.fn();
     render(
       <PlayTable
@@ -379,15 +390,15 @@ describe("PlayTable", () => {
 
     const table = screen.getByRole("region", { name: "Prototype play table" });
     expect(table.querySelector(".play-table__inner--prototype")).toBeInTheDocument();
-    expect(within(table).getByLabelText("Opponent seats")).toBeInTheDocument();
-    const tableState = within(table).getByRole("region", { name: "Table state" });
-    const commandRail = within(table).getByRole("region", { name: "Command rail" });
+    expect(within(table).getByLabelText("Opponent seats")).toHaveAttribute("data-opponent-count", "1");
+    const board = within(table).getByRole("region", { name: "Card table" });
+    const center = within(table).getByRole("region", { name: "Board center" });
     const handDock = within(table).getByRole("region", { name: "Hand dock" });
-    expect(within(tableState).getByLabelText("Your bank")).toHaveTextContent("YOUR BANK");
-    expect(within(tableState).getByLabelText("Your properties")).toHaveTextContent("YOUR PROPERTIES");
+    expect(within(board).getByLabelText("Your bank")).toHaveTextContent("YOUR BANK");
+    expect(within(board).getByLabelText("Your properties")).toHaveTextContent("YOUR PROPERTIES");
     expect(within(handDock).getByText("YOUR HAND (3)")).toBeInTheDocument();
     expect(within(handDock).getByLabelText("Your hand")).toHaveAttribute("data-hand-count", "3");
-    expect(within(table).getByText("PIXEL PROPERTY DEAL")).toBeInTheDocument();
+    expect(within(table).queryByText("PIXEL PROPERTY DEAL")).not.toBeInTheDocument();
     expect(within(table).getByText("YOUR TURN")).toBeInTheDocument();
     expect(within(table).getByText("TURN 7")).toBeInTheDocument();
     expect(within(table).getByText("2 ACTIONS LEFT")).toBeInTheDocument();
@@ -395,23 +406,25 @@ describe("PlayTable", () => {
     expect(within(table).queryByRole("button", { name: /Refresh/i })).not.toBeInTheDocument();
 
     expect(within(table).getByText("99")).toBeInTheDocument();
-    expect(within(table).getByText("Top Discard")).toBeInTheDocument();
-    const piles = within(tableState).getByLabelText("Draw and discard piles");
+    const piles = within(center).getByLabelText("Draw and discard piles");
+    expect(piles).toHaveAttribute("data-layout", "side-by-side");
     expect(within(piles).getByText("DRAW PILE")).toBeInTheDocument();
     expect(within(piles).getByText("DISCARD")).toBeInTheDocument();
+    expect(within(center).getByText("ACTIONS 1/3")).toBeInTheDocument();
 
     expect(within(table).getByText("Bank $6M")).toBeInTheDocument();
     expect(within(table).getByText("Deal Breaker")).toBeInTheDocument();
-    expect(within(table).getAllByText("Boardwalk").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText(/BLUE/i).length).toBeGreaterThan(0);
     expect(within(table).getByText("AI Broker")).toBeInTheDocument();
     expect(within(table).getByText("Hand 4")).toBeInTheDocument();
-    expect(within(table).getByText("P2 charged rent")).toBeInTheDocument();
+    expect(within(table).getByText(/P2 charged rent/i)).toBeInTheDocument();
 
     fireEvent.click(within(table).getByRole("button", { name: "Draw +2 cards" }));
     expect(onChoose).toHaveBeenCalledWith({ type: "DrawCards" });
 
-    const primarySlot = within(commandRail).getByLabelText("Action zone").querySelector(".action-zone__primary");
+    const primarySlot = within(center).getByLabelText("Board controls").querySelector(".board-controls__primary");
     expect(primarySlot).not.toBeNull();
+    expect(primarySlot).toHaveAttribute("data-placement", "table-bottom-right");
     expect(primarySlot?.contains(within(table).getByRole("button", { name: "END TURN" }))).toBe(true);
 
     fireEvent.click(within(table).getByRole("button", { name: "END TURN" }));
@@ -419,7 +432,7 @@ describe("PlayTable", () => {
     expect(onChoose).toHaveBeenCalledWith({ type: "EndTurn" });
   });
 
-  test("keeps selected-card actions in the command rail, separate from the hand dock", () => {
+  test("shows selected-card actions in an anchored menu above the hand card", () => {
     render(
       <PlayTable
         state={playableState}
@@ -429,18 +442,19 @@ describe("PlayTable", () => {
     );
 
     const table = screen.getByRole("region", { name: "Prototype play table" });
-    const commandRail = within(table).getByRole("region", { name: "Command rail" });
     const handDock = within(table).getByRole("region", { name: "Hand dock" });
 
     fireEvent.click(within(handDock).getByRole("button", { name: /Deal Breaker/i }));
-    const panel = within(commandRail).getByRole("region", {
+    const panel = within(handDock).getByRole("menu", {
       name: /Actions for Deal Breaker/i,
     });
 
-    expect(handDock.contains(panel)).toBe(false);
-    expect(within(commandRail).getByText("P2 charged rent")).toBeInTheDocument();
-    expect(within(commandRail).getByText("P2 played rent")).toBeInTheDocument();
-    expect(within(commandRail).getByRole("button", { name: "END TURN" })).toBeInTheDocument();
+    expect(handDock.contains(panel)).toBe(true);
+    expect(panel.closest(".play-hand__item--selected")).not.toBeNull();
+    expect(within(panel).getByRole("menuitem", { name: /View card details/i })).toBeInTheDocument();
+    expect(within(table).getByText(/P2 charged rent/i)).toBeInTheDocument();
+    expect(within(table).getByText(/P2 played rent/i)).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "END TURN" })).toBeInTheDocument();
   });
 
   test("routes hand card action panel choices through matching legal actions", () => {
@@ -456,15 +470,15 @@ describe("PlayTable", () => {
     const table = screen.getByRole("region", { name: "Prototype play table" });
 
     fireEvent.click(within(table).getByRole("button", { name: /Deal Breaker/i }));
-    fireEvent.click(within(table).getByRole("button", { name: /Play to Bank/i }));
+    fireEvent.click(within(table).getByRole("menuitem", { name: /Play to Bank/i }));
     expect(onChoose).toHaveBeenLastCalledWith({ type: "BankCard", card_id: "deal_breaker" });
 
     fireEvent.click(within(table).getByRole("button", { name: /Deal Breaker/i }));
-    fireEvent.click(within(table).getByRole("button", { name: /Use Action/i }));
+    fireEvent.click(within(table).getByRole("menuitem", { name: /Use Action/i }));
     expect(onChoose).toHaveBeenLastCalledWith({ type: "PlayActionCard", card_id: "deal_breaker" });
 
-    fireEvent.click(within(table).getByRole("button", { name: /Boardwalk/i }));
-    fireEvent.click(within(table).getByRole("button", { name: /Play as Property/i }));
+    fireEvent.click(within(table).getByRole("button", { name: /BLUE property/i }));
+    fireEvent.click(within(table).getByRole("menuitem", { name: /Play as Property/i }));
     expect(onChoose).toHaveBeenLastCalledWith({
       type: "PlayProperty",
       card_id: "boardwalk_hand",
@@ -472,7 +486,7 @@ describe("PlayTable", () => {
     });
   });
 
-  test("renders card action panel outside the hand scroll strip", () => {
+  test("opens a dimmed card detail overlay from the selected-card menu", () => {
     render(
       <PlayTable
         state={playableState}
@@ -482,15 +496,14 @@ describe("PlayTable", () => {
     );
 
     const table = screen.getByRole("region", { name: "Prototype play table" });
-    const handStrip = within(table).getByLabelText("Your hand");
 
     fireEvent.click(within(table).getByRole("button", { name: /Deal Breaker/i }));
-    const panel = within(table).getByRole("region", {
-      name: /Actions for Deal Breaker/i,
-    });
+    fireEvent.click(within(table).getByRole("menuitem", { name: /View card details/i }));
+    const dialog = within(table).getByRole("dialog", { name: /Card details for Deal Breaker/i });
 
-    expect(handStrip.contains(panel)).toBe(false);
-    expect(panel.closest(".play-command-rail")).not.toBeNull();
+    expect(dialog).toHaveTextContent("Deal Breaker");
+    expect(dialog).toHaveTextContent("$5M");
+    expect(table.querySelector(".play-overlay-scrim")).toBeInTheDocument();
   });
 
   test("omitted pile metadata shows honest placeholders, not fake counts", () => {
@@ -502,7 +515,7 @@ describe("PlayTable", () => {
     };
     render(<PlayTable state={minimal} onChoose={() => undefined} onRunAi={() => undefined} />);
     const table = screen.getByRole("region", { name: "Prototype play table" });
-    const piles = within(table).getByLabelText("Draw and discard piles");
+    const piles = within(table).getByRole("region", { name: "Board center" });
     expect(within(piles).getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -522,6 +535,8 @@ describe("PlayTable", () => {
     const handRegion = screen.getByLabelText("Your hand");
     expect(handRegion).toHaveAttribute("data-hand-count", "5");
     expect(handRegion).toHaveAttribute("data-hand-dense", "true");
+    expect(handRegion).toHaveAttribute("data-hand-spread", "fan");
+    expect(handRegion.querySelectorAll(".play-card--fanned").length).toBe(5);
   });
 
   test("hand with four or fewer cards omits dense layout flag", () => {
@@ -554,10 +569,10 @@ describe("PlayTable", () => {
     const longCard = within(table).getByRole("button", {
       name: /International Ultra Mega Deal Breaker Deluxe Edition/i,
     });
-    expect(longCard).toHaveAttribute("title", "International Ultra Mega Deal Breaker Deluxe Edition");
+    expect(longCard).toHaveAttribute("title", expect.stringContaining("International Ultra Mega Deal Breaker Deluxe Edition"));
 
     fireEvent.click(longCard);
-    const panel = within(table).getByRole("region", {
+    const panel = within(table).getByRole("menu", {
       name: /Actions for International Ultra Mega Deal Breaker Deluxe Edition/i,
     });
     expect(within(panel).getByText("Use International Ultra Mega Deal Breaker Deluxe Edition")).toBeInTheDocument();
@@ -573,10 +588,26 @@ describe("PlayTable", () => {
   test("renders four opponent seats and core table zones for a 5-player game", () => {
     render(<PlayTable state={fivePlayerState} onChoose={() => undefined} onRunAi={() => undefined} />);
     const table = screen.getByRole("region", { name: "Prototype play table" });
+    const opponentRail = within(table).getByLabelText("Opponent seats");
+    expect(opponentRail).toHaveAttribute("data-opponent-count", "4");
     expect(table.querySelectorAll(".opponent-seat").length).toBe(4);
     expect(within(table).getByText("Rival Two")).toBeInTheDocument();
     expect(within(table).getByText("Rival Five")).toBeInTheDocument();
-    expect(within(table).getByLabelText("Action zone")).toBeInTheDocument();
+    expect(within(table).queryByLabelText("Action zone")).not.toBeInTheDocument();
     expect(within(table).getByLabelText("Draw and discard piles")).toBeInTheDocument();
+  });
+
+  test("opponent bank and property summaries open detail overlays", () => {
+    render(<PlayTable state={playableState} onChoose={() => undefined} onRunAi={() => undefined} />);
+    const table = screen.getByRole("region", { name: "Prototype play table" });
+
+    fireEvent.click(within(table).getByRole("button", { name: /AI Broker bank/i }));
+    expect(within(table).getByRole("dialog", { name: /AI Broker bank/i })).toHaveTextContent("$3M");
+
+    fireEvent.click(within(table).getByRole("button", { name: /Close details/i }));
+    fireEvent.click(within(table).getByRole("button", { name: /AI Broker properties/i }));
+    const dialog = within(table).getByRole("dialog", { name: /AI Broker properties/i });
+    expect(dialog).toHaveTextContent("RED");
+    expect(dialog).toHaveTextContent("$3M");
   });
 });
