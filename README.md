@@ -24,6 +24,34 @@ uv sync --extra dev
 uv run pytest
 ```
 
+### Web API and UI
+
+Run the JSON API (SQLite under `.dbreaker/` by default):
+
+```bash
+uv run dbreaker web
+# optional: --port 8765 --data-dir .dbreaker
+```
+
+In another terminal, from `web/`:
+
+```bash
+npm install
+npm run dev
+```
+
+Verification for the web vertical slice (after `uv sync --extra dev` and `cd web && npm install`):
+
+```bash
+uv run pytest tests/web
+uv run ruff check .
+uv run mypy
+cd web && npm run verify
+```
+
+See [docs/web-interface.md](docs/web-interface.md) for architecture and the full
+verification list.
+
 **Optional ML** (`train`, loading `neural:…` checkpoints) needs PyTorch:
 
 ```bash
