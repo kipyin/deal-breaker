@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -176,6 +177,69 @@ def tournament(
 
 
 @app.command()
+def train(
+    games: int = typer.Option(10, min=1, help="Self-play games to collect before checkpointing."),
+    players: int = typer.Option(4, "--players", min=2, max=5, help="Players per training game."),
+    checkpoint_out: Annotated[
+        Path,
+        typer.Option("--checkpoint-out", help="Path to write a neural checkpoint."),
+    ] = Path("checkpoints/selfplay.pt"),
+    seed: int = typer.Option(1, help="Base RNG seed; game n uses seed + n - 1."),
+    max_turns: int = typer.Option(200, "--max-turns", min=1),
+    max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
+    update_epochs: int = typer.Option(2, "--update-epochs", min=1),
+) -> None:
+    """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
+    try:
+        trainer_module = import_module("dbreaker.ml.trainer")
+        config = trainer_module.PPOConfig(
+            games=games,
+            player_count=players,
+            max_turns=max_turns,
+            max_self_play_steps=max_self_play_steps,
+            update_epochs=update_epochs,
+        )
+        stats = trainer_module.train_self_play(config, checkpoint_out=checkpoint_out, seed=seed)
+    except ImportError as exc:
+        typer.secho(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(
+        f"trained games={stats.games} steps={stats.steps} "
+        f"mean_reward={stats.mean_reward:.3f} checkpoint={checkpoint_out}"
+    )
+
+
+@app.command()
+def evaluate(
+    candidate: str = typer.Option(
+        ...,
+        "--candidate",
+        help="Candidate strategy, e.g. neural:path.pt.",
+    ),
+    baseline: str = typer.Option("basic", "--baseline", help="Baseline strategy name or spec."),
+    games: int = typer.Option(20, min=1),
+    players: int = typer.Option(2, "--players", min=2, max=5),
+    seed: int = typer.Option(1),
+    max_turns: int = typer.Option(200, "--max-turns", min=1),
+    max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
+) -> None:
+    """Evaluate a candidate strategy against a baseline using tournament reporting."""
+    try:
+        report = run_tournament(
+            player_count=players,
+            games=games,
+            strategy_names=[candidate, baseline],
+            seed=seed,
+            max_turns=max_turns,
+            max_self_play_steps=max_self_play_steps,
+        )
+    except ImportError as exc:
+        typer.secho(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(report.to_markdown())
+
+
+@app.command()
 def benchmark(
     games: int = typer.Option(200, min=0, help="Number of self-play games to run."),
     players: int = typer.Option(4, "--players", min=2, max=5, help="Players per table."),
@@ -206,14 +270,18 @@ def benchmark(
     output: str = typer.Option(
         "text",
         "--output",
-        help="'text' for one key=value per line, 'json' for a single JSON object (script-friendly).",
+        help=(
+            "'text' for one key=value per line, "
+            "'json' for a single JSON object (script-friendly)."
+        ),
     ),
 ) -> None:
     """Measure simulator throughput (games/sec, steps/sec) and outcome counts for self-play.
 
     Profiling example (saves a profile; inspect with ``python -m pstats``)::
 
-        uv run python -m cProfile -o .tmp/dbreaker-benchmark.prof -m dbreaker.cli.app benchmark --games 500
+        uv run python -m cProfile -o .tmp/dbreaker-benchmark.prof \
+            -m dbreaker.cli.app benchmark --games 500
 
     """
     out = output.lower().strip()
