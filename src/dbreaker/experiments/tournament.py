@@ -8,7 +8,7 @@ from dbreaker.experiments.matrix import win_matrix
 from dbreaker.experiments.metrics import summarize_results
 from dbreaker.experiments.reports import TournamentReport
 from dbreaker.experiments.runner import GameResult, run_self_play_game
-from dbreaker.strategies.registry import default_registry
+from dbreaker.strategies.registry import create_strategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +30,7 @@ def run_tournament(
     stalemate_turns: int | None = 25,
     on_game: Callable[[GameProgress], None] | None = None,
 ) -> TournamentReport:
-    registry = default_registry()
-    strategies = [registry.create(name) for name in strategy_names]
+    strategies = [create_strategy(name) for name in strategy_names]
     if not strategies:
         raise ValueError("at least one strategy is required")
 

@@ -19,15 +19,14 @@ from dbreaker.cli.renderer import (
 from dbreaker.engine.actions import Action, EndTurn
 from dbreaker.engine.events import GameEvent
 from dbreaker.engine.game import Game
-from dbreaker.strategies.registry import default_registry
+from dbreaker.strategies.registry import create_strategy
 
 
 def run_interactive_play(players: int, ai_strategy: str = "basic") -> None:
     game = Game.new(player_count=players)
-    registry = default_registry()
     console = Console()
     ai_players = {
-        player_id: registry.create(ai_strategy) for player_id in game.state.player_order[1:]
+        player_id: create_strategy(ai_strategy) for player_id in game.state.player_order[1:]
     }
 
     while not game.is_terminal():
@@ -95,9 +94,8 @@ def run_scripted_play(
     Returns 0 on normal end, 1 on error.
     """
     game = Game.new(player_count=players, seed=seed)
-    registry = default_registry()
     ai_players = {
-        player_id: registry.create(ai_strategy) for player_id in game.state.player_order[1:]
+        player_id: create_strategy(ai_strategy) for player_id in game.state.player_order[1:]
     }
 
     def fail(message: str, *, legal: list[str] | None = None) -> int:

@@ -5,7 +5,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from dbreaker.experiments.runner import GameResult, run_self_play_game
-from dbreaker.strategies.registry import default_registry
+from dbreaker.strategies.registry import create_strategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +113,8 @@ def run_benchmark(
 ) -> BenchmarkReport:
     """Run deterministic self-play games and return throughput and outcome stats.
 
-    Game *i* uses ``seed=seed + i`` (0-based *i*), matching :func:`dbreaker.experiments.tournament.run_tournament`.
+    Game *i* uses ``seed=seed + i`` (0-based *i*), matching
+    :func:`dbreaker.experiments.tournament.run_tournament`.
     Strategy seat assignment for each game matches tournament rotation of the given strategy list.
     """
     if games < 0:
@@ -122,12 +123,14 @@ def run_benchmark(
         raise ValueError("player_count must be at least 2")
     if not strategy_names:
         raise ValueError("at least one strategy name is required")
-    registry = default_registry()
-    base_strategies = [registry.create(name) for name in strategy_names]
+    base_strategies = [create_strategy(name) for name in strategy_names]
     t0 = time.perf_counter()
     results: list[GameResult] = []
     for index in range(games):
-        rotated = [base_strategies[(index + offset) % len(base_strategies)] for offset in range(player_count)]
+        rotated = [
+            base_strategies[(index + offset) % len(base_strategies)]
+            for offset in range(player_count)
+        ]
         result = run_self_play_game(
             game_id=f"bench-{index + 1}",
             player_count=player_count,
