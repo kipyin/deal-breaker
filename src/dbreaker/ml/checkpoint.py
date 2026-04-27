@@ -21,6 +21,9 @@ def save_checkpoint(
     model: PolicyValueNetwork,
     training_stats: dict[str, Any],
 ) -> None:
+    """Persist weights and training metadata. Checkpoints are suitable for continuation training
+    (load weights; Adam state is not stored, so each run starts a fresh optimizer).
+    """
     torch = require_torch()
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(

@@ -15,6 +15,8 @@ def test_train_and_evaluate_commands_are_registered() -> None:
 
     assert train_help.exit_code == 0
     assert "--checkpoint-out" in (train_help.stdout + train_help.stderr)
+    assert "--from-checkpoint" in (train_help.stdout + train_help.stderr)
+    assert "--game-seed-offset" in (train_help.stdout + train_help.stderr)
     assert "--gamma" in (train_help.stdout + train_help.stderr)
     assert "--opponent-mix" in (train_help.stdout + train_help.stderr)
     assert evaluate_help.exit_code == 0

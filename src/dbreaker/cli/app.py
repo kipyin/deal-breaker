@@ -210,7 +210,10 @@ def train(
         Path,
         typer.Option("--checkpoint-out", help="Path to write a neural checkpoint."),
     ] = Path("checkpoints/selfplay.pt"),
-    seed: int = typer.Option(1, help="Base RNG seed; game n uses seed + n - 1."),
+    seed: int = typer.Option(
+        1,
+        help="Base RNG seed; game i uses seed + i + game_seed_offset (0-based i).",
+    ),
     max_turns: int = typer.Option(200, "--max-turns", min=1),
     max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
     update_epochs: int = typer.Option(2, "--update-epochs", min=1),
@@ -243,10 +246,54 @@ def train(
             help="Optional checkpoint path added to the opponent pool when mixing.",
         ),
     ] = None,
+    from_checkpoint: Annotated[
+        Path | None,
+        typer.Option(
+            "--from-checkpoint",
+            help="Load policy weights from this checkpoint (continuation training).",
+        ),
+    ] = None,
+    game_seed_offset: int = typer.Option(
+        0,
+        "--game-seed-offset",
+        min=0,
+        help=(
+            "Added to each game's RNG seed. When splitting into batches, set to the "
+            "cumulative number of games from prior runs (same --seed) to avoid replaying "
+            "the same self-play seeds."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print one line per self-play game (steps, outcome, mean reward).",
+    ),
+    metrics_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--metrics-out",
+            help="Write extended training metrics and per-game rows as JSON.",
+        ),
+    ] = None,
 ) -> None:
     """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
     try:
         trainer_module = import_module("dbreaker.ml.trainer")
+        trajectory_module = import_module("dbreaker.ml.trajectory")
+        Trajectory = trajectory_module.SelfPlayTrajectory
+
+        def _on_game(game_index: int, trajectory: Trajectory) -> None:
+            if not verbose:
+                return
+            n = len(trajectory.steps)
+            rewards = trajectory.rewards
+            mr = sum(rewards) / len(rewards) if rewards else 0.0
+            typer.echo(
+                f"game {game_index + 1}/{games} learner_steps={n} "
+                f"ended_by={trajectory.ended_by} mean_reward={mr:.4f}"
+            )
+
         config = trainer_module.PPOConfig(
             games=games,
             player_count=players,
@@ -258,7 +305,15 @@ def train(
             opponent_strategies=_parse_comma_strs(opponents),
             champion_checkpoint=champion,
         )
-        stats = trainer_module.train_self_play(config, checkpoint_out=checkpoint_out, seed=seed)
+        stats = trainer_module.train_self_play(
+            config,
+            checkpoint_out=checkpoint_out,
+            seed=seed,
+            from_checkpoint=from_checkpoint,
+            game_seed_offset=game_seed_offset,
+            on_game_complete=_on_game if verbose else None,
+            metrics_out=metrics_out,
+        )
     except ImportError as exc:
         typer.secho(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc

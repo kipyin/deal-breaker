@@ -71,10 +71,17 @@ def test_collect_self_play_trajectory_records_rewards_for_each_decision() -> Non
 
 def test_train_self_play_smoke_saves_loadable_checkpoint(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "selfplay.pt"
+    metrics_path = tmp_path / "metrics.json"
+    progress: list[tuple[int, int, str]] = []
+
+    def on_game(i: int, trajectory: object) -> None:
+        steps = getattr(trajectory, "steps", ())
+        ended = getattr(trajectory, "ended_by", "")
+        progress.append((i, len(steps), str(ended)))
 
     stats = train_self_play(
         PPOConfig(
-            games=1,
+            games=2,
             player_count=2,
             max_turns=1,
             max_self_play_steps=20,
@@ -82,12 +89,34 @@ def test_train_self_play_smoke_saves_loadable_checkpoint(tmp_path: Path) -> None
         ),
         checkpoint_out=checkpoint_path,
         seed=5,
+        on_game_complete=on_game,
+        metrics_out=metrics_path,
     )
     checkpoint = load_checkpoint(checkpoint_path)
 
-    assert stats.games == 1
+    assert stats.games == 2
     assert checkpoint.schema_version == FEATURE_SCHEMA_VERSION
     assert isinstance(checkpoint.model, PolicyValueNetwork)
+    assert len(progress) == 2
+    assert progress[0][0] == 0 and progress[1][0] == 1
+
+    payload = stats.as_dict()
+    assert payload.get("game_seed_offset") == 0
+    assert "continued_from" not in payload
+    assert "rollout_seconds" in payload
+    assert "ppo_update_seconds" in payload
+    assert "total_seconds" in payload
+    assert "ended_by" in payload
+    assert sum(payload["ended_by"].values()) == 2
+    assert "per_game" in payload
+    assert len(payload["per_game"]) == 2
+    for row in payload["per_game"]:
+        assert set(row.keys()) >= {"game_index", "learner_steps", "ended_by", "mean_reward"}
+    if stats.steps > 0:
+        assert payload.get("policy_loss") is not None
+        assert payload.get("clip_fraction") is not None
+    assert metrics_path.is_file()
+    assert metrics_path.read_text(encoding="utf-8").strip().startswith("{")
 
 
 def test_neural_strategy_checkpoint_is_usable_by_tournament(tmp_path: Path) -> None:
@@ -196,3 +225,124 @@ def test_rl_evaluate_cli_runs_tournament(tmp_path: Path) -> None:
     )
     assert ev.exit_code == 0, ev.stdout + ev.stderr
     assert "basic" in ev.stdout
+
+
+def test_train_self_play_rejects_model_and_from_checkpoint_together() -> None:
+    m = PolicyValueNetwork()
+    with pytest.raises(ValueError, match="at most one"):
+        train_self_play(
+            PPOConfig(games=1, player_count=2, max_turns=1, max_self_play_steps=10, update_epochs=1),
+            model=m,
+            from_checkpoint=Path("nope.pt"),
+        )
+
+
+def test_from_checkpoint_sets_continued_from_in_stats(tmp_path: Path) -> None:
+    base = tmp_path / "base.pt"
+    train_self_play(
+        PPOConfig(games=1, player_count=2, max_turns=1, max_self_play_steps=20, update_epochs=1),
+        checkpoint_out=base,
+        seed=3,
+    )
+    out = tmp_path / "out.pt"
+    stats = train_self_play(
+        PPOConfig(games=1, player_count=2, max_turns=1, max_self_play_steps=20, update_epochs=1),
+        checkpoint_out=out,
+        seed=3,
+        from_checkpoint=base,
+        game_seed_offset=1,
+    )
+    assert stats.continued_from == str(base)
+    d = stats.as_dict()
+    assert d["continued_from"] == str(base)
+    assert d["game_seed_offset"] == 1
+
+
+def test_game_seed_offset_changes_self_play_seed(tmp_path: Path) -> None:
+    """Per-game seed is seed + game_index + offset; offset 0 vs 1 should diverge trajectories."""
+    a = tmp_path / "a.pt"
+    b = tmp_path / "b.pt"
+    train_self_play(
+        PPOConfig(games=1, player_count=2, max_turns=1, max_self_play_steps=25, update_epochs=1),
+        checkpoint_out=a,
+        seed=10,
+        game_seed_offset=0,
+    )
+    train_self_play(
+        PPOConfig(games=1, player_count=2, max_turns=1, max_self_play_steps=25, update_epochs=1),
+        checkpoint_out=b,
+        seed=10,
+        game_seed_offset=1,
+    )
+    sa = load_checkpoint(a).model.state_dict()
+    sb = load_checkpoint(b).model.state_dict()
+    assert any(
+        not torch.equal(sa[k], sb[k]) for k in sa.keys()  # type: ignore[union-attr]
+    )
+
+
+def test_train_cli_from_checkpoint_and_game_seed_offset(tmp_path: Path) -> None:
+    runner = CliRunner()
+    base = tmp_path / "base.pt"
+    r0 = runner.invoke(
+        app,
+        [
+            "train",
+            "--games",
+            "1",
+            "--players",
+            "2",
+            "--checkpoint-out",
+            str(base),
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "25",
+            "--update-epochs",
+            "1",
+            "--seed",
+            "42",
+        ],
+    )
+    assert r0.exit_code == 0, r0.stdout + r0.stderr
+    out = tmp_path / "out.pt"
+    r1 = runner.invoke(
+        app,
+        [
+            "train",
+            "--games",
+            "1",
+            "--players",
+            "2",
+            "--checkpoint-out",
+            str(out),
+            "--from-checkpoint",
+            str(base),
+            "--game-seed-offset",
+            "5",
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "25",
+            "--update-epochs",
+            "1",
+            "--seed",
+            "42",
+        ],
+    )
+    assert r1.exit_code == 0, r1.stdout + r1.stderr
+    assert out.is_file()
+
+
+def test_training_job_request_resume_and_seed_offset_fields() -> None:
+    from dbreaker.web.schemas import TrainingJobRequest
+
+    body = TrainingJobRequest(
+        player_count=2,
+        games=1,
+        resume_from_checkpoint_id="ckpt_x",
+        game_seed_offset=100,
+    )
+    d = body.model_dump()
+    assert d["resume_from_checkpoint_id"] == "ckpt_x"
+    assert d["game_seed_offset"] == 100
