@@ -265,6 +265,7 @@ unexpected server failures.
       "id": "P2",
       "name": "P2",
       "hand_size": 5,
+      "bank": [],
       "bank_value": 0,
       "properties": {},
       "completed_sets": 0
@@ -491,9 +492,11 @@ Shell layout:
 - `CockpitPage` shows current champions/checkpoints, recent jobs, recent games,
   latest evaluation summaries, and quick actions for play, train, evaluate, and
   inspect.
-- `PlayInspectorPage` combines the play surface and inspector. The left column
-  shows player hand, bank, properties, pending state, and legal actions. The right
-  column shows timeline, event details, AI decisions, and raw action payloads.
+- `PlayInspectorPage` combines the play surface and inspector. The play surface
+  uses a striped pixel table: opponents around the board, draw/discard piles and
+  actions-left in the center, player bank/properties on the table, and a curved
+  hand dock with card-specific context menus. The inspector column shows timeline,
+  event details, AI decisions, and raw action payloads.
 - `ReplayInspectorPage` reuses inspector components with step-through controls,
   event filters, and immutable replay metadata.
 - `TrainingLabPage` contains a job creation form, active job list, logs preview,
@@ -566,26 +569,28 @@ npm run build
 ### Play table layout (manual visual regression)
 
 Automated `vitest` + jsdom tests cover `PlayTable` content, actions, and the
-required `Table state`, `Command rail`, and `Hand dock` landmarks. They cannot
-assert pixel overlap on the arcade felt, so after CSS or layout changes to the
-play surface, open **Play** in the dev app and spot-check the following. Resize
-the browser between checks.
+required `Card table`, `Board center`, `Board controls`, `Opponent seats`, and
+`Hand dock` landmarks. They cannot assert pixel overlap on the arcade felt, so
+after CSS or layout changes to the play surface, open **Play** in the dev app and
+spot-check the following. Resize the browser between checks.
 
 | State | What to verify |
 | --- | --- |
-| **Normal** | Default mid-game view (few hand cards, typical bank/properties). Opponents, draw/discard piles, bank, and properties sit in the table-state area; **END TURN** stays in the command rail. |
-| **Dense** | Stress-test hands and long copy (e.g. many bank tokens and property rows in one session). The hand dock scrolls horizontally when needed, while piles, selected-card actions, and the primary button remain visible. |
-| **Medium / small** | Around **760–900px**, then narrower mobile widths. The command rail drops below the table state before columns become cramped; the hand dock remains a separate bottom region. |
-| **Large** | About **1280×720** (or max frame). The surface reads as one command-center table: table state on the left, command rail on the right, hand dock along the bottom. |
-| **Selected card** | Select a hand card. Its actions appear in the command rail with pending, last action, flash messages, and the primary action still visible in the same rail. |
-| **Flash / pending** | Trigger a `flashMessage` and a pending response. The alert, pending callout, and last-action callout remain inside the command rail without hiding one another. |
+| **Normal** | Default mid-game view (few hand cards, typical bank/properties). Opponents sit above/around the board, draw/discard piles and the actions-left badge sit in the center, and **END TURN** stays in board controls. |
+| **Dense** | Stress-test hands and long copy. The hand remains fanned for small hands and becomes flatter/scrollable for dense hands; selected-card menus stay reachable above the clicked card. |
+| **Medium / small** | Around **760-900px**, then narrower mobile widths. Opponents collapse into a simpler rail, board center stacks above bank/properties, and the hand dock remains usable. |
+| **Large** | About **1280x720** (or max frame). The surface reads as a single striped card table, not a dashboard: fewer boxes, centered piles, visible opponent summaries, curved hand. |
+| **Selected card** | Select a hand card. Its context menu appears above that card with legal plays, **View card details**, and **Cancel**. `View card details` opens a centered dimmed overlay. |
+| **Opponent details** | Click an opponent bank block to inspect public bank cards. Click the property graph to inspect property cards. Opponent hands remain hidden except for `hand_size`. |
+| **Flash / pending** | Trigger a `flashMessage` and a pending response. The alert, pending summary, last action, and primary action remain in board controls without recreating the old action-zone panel. |
 
-Related classes and tokens: `play-command-center`, `play-table-state`,
-`play-command-rail`, `player-area__hand-rail` (`data-hand-count`,
-`data-hand-dense`), `action-zone__grid`, and `action-zone__primary` in
+Related classes and tokens: `play-board`, `board-center`, `board-controls`,
+`play-opponents` (`data-opponent-count`), `player-area__hand-rail`,
+`play-hand` (`data-hand-count`, `data-hand-dense`), `card-action-panel`,
+`card-detail`, and `opponent-detail` in
 `web/src/styles/07-active-play-surface.css`. Keep
 `web/src/features/play/PlayTable.test.tsx` passing and extend it when adding new
-required landmarks or action rail states.
+required landmarks or card-table states.
 
 For local UI development, `uv run dbreaker web` is the default one-command launcher.
 It serves the API on `http://127.0.0.1:8765` and the Vite frontend on
