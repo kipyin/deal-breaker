@@ -3,13 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from dbreaker.cli.app import app
 from dbreaker.experiments.tournament import run_tournament
 from dbreaker.ml.checkpoint import load_checkpoint, save_checkpoint
 from dbreaker.ml.features import FEATURE_SCHEMA_VERSION
 from dbreaker.ml.model import PolicyValueNetwork
 from dbreaker.ml.trainer import PPOConfig, train_self_play
-from dbreaker.ml.trajectory import collect_self_play_trajectory
+from dbreaker.ml.trajectory import (
+    TrajectoryStep,
+    collect_self_play_trajectory,
+    sparse_terminal_rewards_for_steps,
+)
 from dbreaker.strategies.registry import create_strategy
 
 try:
@@ -18,6 +24,33 @@ except ImportError:
     torch = None  # type: ignore[assignment]
 
 pytestmark = pytest.mark.skipif(torch is None, reason="torch is not installed")
+
+
+def test_sparse_terminal_rewards_single_nonzero_per_player() -> None:
+    from dbreaker.engine.actions import EndTurn
+    from dbreaker.ml.features import (
+        ACTION_FEATURE_DIM,
+        FEATURE_SCHEMA_VERSION,
+        OBSERVATION_FEATURE_DIM,
+        EncodedActionBatch,
+    )
+
+    batch = EncodedActionBatch(
+        schema_version=FEATURE_SCHEMA_VERSION,
+        observation_features=(0.0,) * OBSERVATION_FEATURE_DIM,
+        action_features=(tuple(0.0 for _ in range(ACTION_FEATURE_DIM)),),
+        actions=(EndTurn(),),
+    )
+    steps = (
+        TrajectoryStep("P1", batch, 0, 0.0, 0.0),
+        TrajectoryStep("P2", batch, 0, 0.0, 0.0),
+        TrajectoryStep("P1", batch, 0, 0.0, 0.0),
+    )
+    rewards = sparse_terminal_rewards_for_steps(
+        steps,
+        {"P1": 0.5, "P2": -0.5},
+    )
+    assert rewards == (0.0, -0.5, 0.5)
 
 
 def test_collect_self_play_trajectory_records_rewards_for_each_decision() -> None:
@@ -83,3 +116,83 @@ def test_neural_strategy_checkpoint_is_usable_by_tournament(tmp_path: Path) -> N
         + report.games_aborted
     )
     assert total_games == 1
+
+
+def test_rl_search_cli_trains_one_checkpoint(tmp_path: Path) -> None:
+    runner = CliRunner()
+    out = tmp_path / "rl-search-out"
+    result = runner.invoke(
+        app,
+        [
+            "rl-search",
+            "--output-dir",
+            str(out),
+            "--players",
+            "2",
+            "--runs",
+            "1",
+            "--games-per-run",
+            "1",
+            "--seed",
+            "7",
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "30",
+            "--update-epochs",
+            "1",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    checkpoint = out / "2p" / "run-001.pt"
+    manifest = out / "2p" / "run-001.json"
+    assert checkpoint.is_file()
+    assert manifest.is_file()
+
+
+def test_rl_evaluate_cli_runs_tournament(tmp_path: Path) -> None:
+    runner = CliRunner()
+    ck = tmp_path / "policy.pt"
+    train_result = runner.invoke(
+        app,
+        [
+            "train",
+            "--games",
+            "1",
+            "--players",
+            "2",
+            "--checkpoint-out",
+            str(ck),
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "30",
+            "--update-epochs",
+            "1",
+            "--seed",
+            "11",
+        ],
+    )
+    assert train_result.exit_code == 0, train_result.stdout + train_result.stderr
+    ev = runner.invoke(
+        app,
+        [
+            "rl-evaluate",
+            "--candidate",
+            f"neural:{ck}",
+            "--players",
+            "2",
+            "--eval-games",
+            "1",
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "40",
+            "--seed",
+            "12",
+            "--baselines",
+            "basic",
+        ],
+    )
+    assert ev.exit_code == 0, ev.stdout + ev.stderr
+    assert "basic" in ev.stdout
