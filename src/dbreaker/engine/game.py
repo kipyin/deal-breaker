@@ -20,6 +20,8 @@ class Game:
     state: GameState
     event_log: list[GameEvent] = field(default_factory=list)
     action_log: list[dict[str, Any]] = field(default_factory=list)
+    #: When False, :meth:`step` skips state digests, event log, and action log (faster RL rollouts).
+    record_transitions: bool = True
 
     @classmethod
     def new(
@@ -29,6 +31,7 @@ class Game:
         seed: int | None = None,
         rules: RuleConfig | None = None,
         preset_hands: list[list[Card]] | None = None,
+        record_transitions: bool = True,
     ) -> Game:
         if not 2 <= player_count <= 5:
             raise ValueError("player_count must be between 2 and 5")
@@ -49,7 +52,8 @@ class Game:
                 deck=deck,
                 seed=seed,
                 rules=rule_config,
-            )
+            ),
+            record_transitions=record_transitions,
         )
 
     def legal_actions(self, player_id: str) -> list[Action]:
@@ -60,19 +64,21 @@ class Game:
         return self.state.active_player_id
 
     def step(self, player_id: str, action: Action) -> StepResult:
-        before = state_digest(self.state)
+        if self.record_transitions:
+            before = state_digest(self.state)
         result = resolve_action(self.state, player_id, action)
-        after = state_digest(self.state)
-        self.event_log.extend(result.events)
-        self.action_log.append(
-            {
-                "player_id": player_id,
-                "action_payload": action_to_payload(action),
-                "before_digest": before,
-                "after_digest": after,
-                "event_digests": [event.digest() for event in result.events],
-            }
-        )
+        if self.record_transitions:
+            after = state_digest(self.state)
+            self.event_log.extend(result.events)
+            self.action_log.append(
+                {
+                    "player_id": player_id,
+                    "action_payload": action_to_payload(action),
+                    "before_digest": before,
+                    "after_digest": after,
+                    "event_digests": [event.digest() for event in result.events],
+                }
+            )
         return result
 
     def observation_for(self, player_id: str, *, omniscient: bool = False) -> Observation:

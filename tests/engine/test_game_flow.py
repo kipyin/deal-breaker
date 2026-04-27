@@ -2,6 +2,7 @@ from dbreaker.engine.actions import BankCard, DiscardCard, DrawCards, EndTurn, P
 from dbreaker.engine.cards import Card, CardKind, PropertyColor
 from dbreaker.engine.game import Game
 from dbreaker.engine.rules import GamePhase, RuleConfig
+from dbreaker.engine.state import state_digest
 
 
 def test_basic_turn_flow_records_events_and_advances_player() -> None:
@@ -149,3 +150,20 @@ def test_player_wins_after_completing_required_property_sets() -> None:
 
     assert game.state.winner_id == "P1"
     assert game.event_log[-1].type == "game_won"
+
+
+def test_record_transitions_false_matches_state_and_skips_logs() -> None:
+    g_log = Game.new(player_count=2, seed=5)
+    g_fast = Game.new(player_count=2, seed=5, record_transitions=False)
+    for _ in range(25):
+        player_id = g_log.active_player_id
+        legal = g_log.legal_actions(player_id)
+        assert legal
+        action = legal[0]
+        r_log = g_log.step(player_id, action)
+        r_fast = g_fast.step(player_id, action)
+        assert r_log.accepted == r_fast.accepted
+        assert state_digest(g_log.state) == state_digest(g_fast.state)
+    assert g_fast.action_log == []
+    assert g_fast.event_log == []
+    assert len(g_log.action_log) == 25
