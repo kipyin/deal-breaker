@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 import sys
+import time
+import webbrowser
 from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Literal
@@ -223,7 +226,10 @@ def train(
         "--opponent-mix",
         min=0.0,
         max=1.0,
-        help="Probability per game of training against heuristics / champion instead of pure self-play.",
+        help=(
+            "Probability per game of training against heuristics / champion "
+            "instead of pure self-play."
+        ),
     ),
     opponents: str = typer.Option(
         "basic,aggressive,defensive,set_completion",
@@ -232,7 +238,10 @@ def train(
     ),
     champion: Annotated[
         Path | None,
-        typer.Option("--champion", help="Optional checkpoint path added to the opponent pool when mixing."),
+        typer.Option(
+            "--champion",
+            help="Optional checkpoint path added to the opponent pool when mixing.",
+        ),
     ] = None,
 ) -> None:
     """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
@@ -493,6 +502,201 @@ def benchmark(
     else:
         for line in report.to_text_lines():
             typer.echo(line)
+
+
+_DEFAULT_WEB_DATA = Path(".dbreaker")
+_DEFAULT_API_HOST = "127.0.0.1"
+_DEFAULT_API_PORT = 8765
+_DEFAULT_FRONTEND_HOST = "127.0.0.1"
+_DEFAULT_FRONTEND_PORT = 5173
+
+
+def _web_dir() -> Path:
+    repo_web = Path(__file__).resolve().parents[3] / "web"
+    if repo_web.is_dir():
+        return repo_web
+    cwd_web = Path.cwd() / "web"
+    if cwd_web.is_dir():
+        return cwd_web
+    typer.secho(
+        "Error: could not find the Vite web/ directory. Run from the repository root "
+        "or use `dbreaker api` for the backend only.",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+def _run_api_server(
+    *,
+    host: str,
+    port: int,
+    data_dir: Path | None,
+    artifacts_dir: Path | None,
+) -> None:
+    try:
+        uvicorn = import_module("uvicorn")
+    except ImportError as exc:
+        typer.secho(
+            "Error: uvicorn is required. Install the web or dev extra "
+            "(e.g. `uv sync --all-extras`).",
+            err=True,
+        )
+        raise typer.Exit(2) from exc
+    web_module = import_module("dbreaker.web")
+
+    root = data_dir if data_dir is not None else _DEFAULT_WEB_DATA
+    artifact_root = artifacts_dir if artifacts_dir is not None else root / "artifacts"
+    api_app = web_module.create_app(data_root=root, artifact_root=artifact_root)
+    uvicorn.run(api_app, host=host, port=port, log_level="info")
+
+
+def _path_option(name: str, value: Path | None) -> list[str]:
+    if value is None:
+        return []
+    return [name, str(value)]
+
+
+def _terminate_process(proc: subprocess.Popen[object]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _run_full_web_stack(
+    *,
+    host: str,
+    port: int,
+    frontend_host: str,
+    frontend_port: int,
+    data_dir: Path | None,
+    artifacts_dir: Path | None,
+    open_browser: bool,
+) -> None:
+    frontend_url = f"http://{frontend_host}:{frontend_port}/"
+    api_url = f"http://{host}:{port}/"
+    backend_cmd = [
+        sys.executable,
+        "-m",
+        "dbreaker.cli.app",
+        "api",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        *_path_option("--data-dir", data_dir),
+        *_path_option("--artifacts-dir", artifacts_dir),
+    ]
+    frontend_cmd = [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        frontend_host,
+        "--port",
+        str(frontend_port),
+    ]
+
+    typer.echo(f"Frontend: {frontend_url}")
+    typer.echo(f"API: {api_url}")
+    backend_proc = subprocess.Popen(backend_cmd)
+    try:
+        frontend_proc = subprocess.Popen(frontend_cmd, cwd=_web_dir())
+    except FileNotFoundError as exc:
+        _terminate_process(backend_proc)
+        typer.secho(
+            "Error: npm was not found. Install Node.js/npm or use `dbreaker api` "
+            "for the backend only.",
+            err=True,
+        )
+        raise typer.Exit(2) from exc
+    procs = [backend_proc, frontend_proc]
+    try:
+        if open_browser:
+            time.sleep(1)
+            webbrowser.open(frontend_url)
+        while True:
+            for proc in procs:
+                code = proc.poll()
+                if code is not None:
+                    raise typer.Exit(code)
+            time.sleep(0.25)
+    except KeyboardInterrupt:
+        typer.echo("Shutting down web stack...")
+    finally:
+        for proc in reversed(procs):
+            _terminate_process(proc)
+
+
+@app.command("api")
+def api(
+    host: str = typer.Option(_DEFAULT_API_HOST, help="Bind address for the API server."),
+    port: int = typer.Option(_DEFAULT_API_PORT, help="Port for the API server."),
+    data_dir: Annotated[
+        Path | None,
+        typer.Option(help="Data root (SQLite and default layout)."),
+    ] = None,
+    artifacts_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="Artifact root; defaults to <data_dir>/artifacts if omitted.",
+        ),
+    ] = None,
+) -> None:
+    """Run only the FastAPI backend service."""
+    _run_api_server(
+        host=host,
+        port=port,
+        data_dir=data_dir,
+        artifacts_dir=artifacts_dir,
+    )
+
+
+@app.command("web")
+def web(
+    host: str = typer.Option(_DEFAULT_API_HOST, help="Bind address for the API server."),
+    port: int = typer.Option(_DEFAULT_API_PORT, help="Port for the API server."),
+    frontend_host: str = typer.Option(
+        _DEFAULT_FRONTEND_HOST,
+        "--frontend-host",
+        help="Bind address for the Vite frontend.",
+    ),
+    frontend_port: int = typer.Option(
+        _DEFAULT_FRONTEND_PORT,
+        "--frontend-port",
+        help="Port for the Vite frontend.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the frontend URL in a browser after starting.",
+    ),
+    data_dir: Annotated[
+        Path | None,
+        typer.Option(help="Data root (SQLite and default layout)."),
+    ] = None,
+    artifacts_dir: Annotated[
+        Path | None,
+        typer.Option(
+            help="Artifact root; defaults to <data_dir>/artifacts if omitted.",
+        ),
+    ] = None,
+) -> None:
+    """Run the full local web app: FastAPI backend plus Vite frontend."""
+    _run_full_web_stack(
+        host=host,
+        port=port,
+        frontend_host=frontend_host,
+        frontend_port=frontend_port,
+        data_dir=data_dir,
+        artifacts_dir=artifacts_dir,
+        open_browser=open_browser,
+    )
 
 
 @app.command()
