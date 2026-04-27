@@ -88,7 +88,7 @@ export function CockpitPage() {
       <div className="cockpit-quick pixel-panel surface-panel">
         <p className="surface-kicker">Quick actions</p>
         <div className="surface-toolbar">
-          <Link className="pixel-button" to="/play">
+          <Link className="pixel-button pixel-button--secondary" to="/play">
             Open table setup
           </Link>
           <Link className="pixel-button pixel-button--secondary" to="/train">

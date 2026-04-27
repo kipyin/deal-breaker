@@ -74,7 +74,7 @@ export function PlayInspectorPage() {
   const status = String(st?.status ?? "");
 
   return (
-    <section aria-label="Live play console" className="game-surface page-console play-page">
+    <section aria-label="Live play console" className="game-surface page-console play-page play-page--session">
       <PlayTable
         state={st}
         onChoose={(payload) => void applyAction(payload)}
@@ -83,9 +83,9 @@ export function PlayInspectorPage() {
         flashMessage={err}
       />
 
-      <header className="surface-hero surface-hero--after-table">
+      <header className="surface-hero surface-hero--after-table surface-hero--session">
         <p className="surface-hero__topline">Session</p>
-        <h1 className="page-title">Play · {gameId}</h1>
+        <h1 className="page-title page-title--session">Play · {gameId}</h1>
         <p className="surface-hero__copy">
           Card-first play on the felt. Expand developer details for version, the event timeline, and
           raw inspector JSON.

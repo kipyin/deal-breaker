@@ -89,6 +89,15 @@ describe("restyled app page surfaces", () => {
     expect(
       screen.getByRole("region", { name: "Command deck" })
     ).toBeInTheDocument();
+    const quick = [
+      screen.getByRole("link", { name: "Open table setup" }),
+      screen.getByRole("link", { name: "Training lab" }),
+      screen.getByRole("link", { name: "Run evaluation" }),
+      screen.getByRole("link", { name: "Browse artifacts" }),
+    ];
+    for (const el of quick) {
+      expect(el).toHaveClass("pixel-button", "pixel-button--secondary");
+    }
     expect(screen.getByRole("link", { name: "Open table setup" })).toHaveAttribute(
       "href",
       "/play"

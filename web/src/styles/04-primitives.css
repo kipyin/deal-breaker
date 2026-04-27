@@ -1,0 +1,128 @@
+/* -------------------------------------------------------------------------- */
+/* Prototype-style building blocks (use alone or with .panel)                */
+/* -------------------------------------------------------------------------- */
+.game-surface {
+  min-height: 50vh;
+  border-radius: 4px;
+  padding: var(--db-space-lg);
+  background: radial-gradient(
+      ellipse 120% 85% at 50% 0%,
+      var(--db-bg-elevated) 0%,
+      var(--db-bg-deep) 50%,
+      var(--db-bg-base) 100%
+    ),
+    var(--db-bg-deep);
+  border: 3px solid var(--db-border-strong);
+  box-shadow: 6px 6px 0 #000, var(--db-shadow-inset-highlight);
+}
+
+.pixel-panel {
+  background: linear-gradient(
+    165deg,
+    var(--db-bg-elevated) 0%,
+    var(--db-bg-surface) 52%,
+    var(--db-bg-muted) 100%
+  );
+  border: 2px solid var(--db-border-strong);
+  border-radius: var(--db-radius-md);
+  padding: var(--db-space-lg);
+  box-shadow: var(--db-shadow-panel), 0 0 40px var(--db-accent-glow);
+}
+
+.pixel-card {
+  background: var(--db-bg-inset);
+  border: 2px solid var(--db-border);
+  border-radius: var(--db-radius-sm);
+  padding: var(--db-space-sm) var(--db-space-md);
+  box-shadow: var(--db-shadow-card);
+  color: var(--db-text);
+}
+
+.pixel-button {
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: var(--db-radius-sm);
+  border: 2px solid var(--db-cta);
+  background: linear-gradient(180deg, var(--db-cta-bright) 0%, var(--db-cta) 100%);
+  color: var(--db-bg-deep);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 0.5rem 1rem;
+  box-shadow: 0 0 18px rgb(255 107 157 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.28);
+}
+
+.pixel-button:hover:not(:disabled) {
+  filter: brightness(1.07);
+  text-decoration: none;
+}
+
+.pixel-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pixel-button--secondary {
+  border-color: var(--db-border-strong);
+  background: var(--db-bg-elevated);
+  color: var(--db-text);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.pixel-button--secondary:hover:not(:disabled) {
+  border-color: var(--db-border-neon);
+  background: var(--db-bg-surface);
+}
+
+.pixel-button:focus-visible,
+.action-card-button:focus-visible {
+  outline: 2px solid var(--db-accent);
+  outline-offset: 3px;
+}
+
+.seed-input {
+  width: 100%;
+  max-width: 12rem;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--db-radius-pill);
+  border: 1px solid var(--db-border);
+  background: var(--db-bg-muted);
+  color: var(--db-text-soft);
+}
+
+.status-chip--ok {
+  border-color: var(--db-success);
+  color: var(--db-success);
+}
+
+.status-chip--warn {
+  border-color: var(--db-warning);
+  color: var(--db-warning);
+}
+
+.status-chip--err {
+  border-color: var(--db-danger);
+  color: var(--db-danger);
+}
+
+.status-chip--accent {
+  border-color: var(--db-accent-dim);
+  color: var(--db-accent);
+}

@@ -1,0 +1,95 @@
+/* -------------------------------------------------------------------------- */
+/* App shell                                                                  */
+/* -------------------------------------------------------------------------- */
+.app-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 2.5rem;
+}
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.brand {
+  font-family: var(--db-font-pixel);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--db-text-strong);
+  font-size: clamp(0.7rem, 1.1vw, 0.9rem);
+  text-shadow: 0 0 24px var(--db-accent-glow), 2px 2px 0 #000;
+}
+
+.eyebrow {
+  color: var(--db-text-muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  margin: 0 0 0.15rem;
+  text-transform: uppercase;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  border: 3px solid var(--db-border);
+  border-radius: 2px;
+  background: var(--db-bg-surface);
+  padding: 0.35rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 4px 4px 0 #000, var(--db-shadow-inset-highlight);
+}
+
+.nav-link {
+  border-radius: var(--db-radius-md);
+  color: var(--db-text-soft);
+  padding: 0.45rem 0.75rem;
+}
+
+.nav-link:hover {
+  background: var(--db-bg-elevated);
+  text-decoration: none;
+}
+
+.nav-link.active {
+  background: var(--db-nav-active);
+  color: var(--db-nav-active-fg);
+  box-shadow: 0 0 16px rgb(45 77 144 / 0.35);
+}
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius-pill);
+  background: var(--db-bg-surface);
+  color: var(--db-text-soft);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.75rem;
+  box-shadow: var(--db-shadow-inset-highlight);
+}
+
+.status-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: var(--db-radius-pill);
+  background: var(--db-success);
+  box-shadow: 0 0 0 3px var(--db-success-glow);
+}
+
+.status-dot--error {
+  background: var(--db-danger);
+  box-shadow: 0 0 0 3px var(--db-danger-glow);
+}
+
+.status-strip__latest {
+  color: var(--db-text-muted);
+}

@@ -1,0 +1,99 @@
+/* -------------------------------------------------------------------------- */
+/* Design tokens — prototype-inspired dark desktop + neon arcade accents      */
+/* -------------------------------------------------------------------------- */
+:root {
+  /* Arcade table typography (see index.html font links) */
+  --db-font-pixel: "Press Start 2P", "Courier New", Courier, monospace;
+  --db-font-terminal: "VT323", "Consolas", "Lucida Console", monospace;
+
+  /* Felt & table */
+  --db-table-felt: #2a1f45;
+  --db-table-felt-mid: #3d2566;
+  --db-table-edge: #0a0a0a;
+
+  /* Canvas */
+  --db-bg-deep: #0a0b10;
+  --db-bg-base: #12131a;
+  --db-bg-elevated: #161822;
+  --db-bg-surface: #181a24;
+  --db-bg-inset: #0f1015;
+  --db-bg-muted: #14151c;
+  --db-bg-chip: #222534;
+
+  /* Typography */
+  --db-text: #e8e8ef;
+  --db-text-strong: #f2f2f7;
+  --db-text-muted: #8b8e9a;
+  --db-text-soft: #c5c6d2;
+  --db-text-dim: #b0b3c0;
+  --db-text-code: #b8bac7;
+
+  /* Neon / feedback */
+  --db-accent: #5ee7df;
+  --db-accent-dim: #3aa89f;
+  --db-accent-glow: rgb(94 231 223 / 0.22);
+  --db-link: #8ab4ff;
+  --db-link-hover: #a8c4ff;
+  --db-cta: #ff6b9d;
+  --db-cta-bright: #ff8fb3;
+  --db-success: #62d26f;
+  --db-success-glow: rgb(98 210 111 / 0.12);
+  --db-warning: #f0c14a;
+  --db-danger: #ff8a8a;
+  --db-danger-glow: rgb(255 138 138 / 0.12);
+
+  /* Structure */
+  --db-border: #2a2d3a;
+  --db-border-strong: #3d4152;
+  --db-border-input: #2e3140;
+  --db-border-neon: rgb(94 231 223 / 0.45);
+  --db-nav-active: #2d4d90;
+  --db-nav-active-fg: #ffffff;
+  --db-promoted-bg: rgb(45 77 144 / 0.55);
+  --db-promoted-fg: #b8d4ff;
+
+  /* Elevation */
+  --db-shadow-panel: 0 4px 24px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --db-shadow-card: 0 2px 12px rgb(0 0 0 / 0.35),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --db-shadow-inset-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+
+  --db-radius-sm: 6px;
+  --db-radius-md: 10px;
+  --db-radius-lg: 14px;
+  --db-radius-pill: 999px;
+
+  --db-space-xs: 0.35rem;
+  --db-space-sm: 0.5rem;
+  --db-space-md: 0.75rem;
+  --db-space-lg: 1rem;
+
+  /* Reference layout: 1280×720 felt (scaled via frame max-width + aspect-ratio) */
+  --db-table-ref-w: 1280;
+  --db-table-ref-h: 720;
+  --db-card-lift: -5px;
+  --db-card-glow: 0 0 0 1px var(--db-accent), 0 0 20px var(--db-accent-glow);
+  --db-select-ring: 0 0 0 3px #f0c14a, 0 0 16px rgb(240 193 74 / 0.45);
+
+  /* Play surface: tinted neutrals (Restrained) + arcade accent; avoid raw #000/#fff for large fills */
+  --db-play-felt-0: oklch(0.18 0.04 280);
+  --db-play-felt-1: oklch(0.14 0.03 280);
+  --db-play-felt-2: oklch(0.1 0.025 280);
+  --db-play-border: oklch(0.12 0.02 280);
+  --db-play-text-on-dark: oklch(0.95 0.01 280);
+  --db-play-muted: oklch(0.72 0.03 280);
+  --db-play-accent: #5ee7df;
+  --db-play-warn: #f0c14a;
+  --db-play-danger: #c44d5c;
+  --play-surface-pad: clamp(0.65rem, 1.5vw, 1rem);
+  --play-surface-gap: 0.65rem;
+  --play-card-min-w: 88px;
+  --play-card-max-w: 104px;
+  --play-card-aspect: 1.38;
+
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--db-text);
+  background: var(--db-bg-base);
+}
