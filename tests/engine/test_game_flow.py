@@ -20,7 +20,10 @@ def test_basic_turn_flow_records_events_and_advances_player() -> None:
 
 
 def test_over_limit_hand_can_continue_until_actions_are_done() -> None:
-    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(7)]
+    hand = [
+        Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1)
+        for index in range(7)
+    ]
     game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
     game.state.deck = [
         Card(id="draw-1", name="$1", kind=CardKind.MONEY, value=1),
@@ -40,7 +43,10 @@ def test_over_limit_hand_can_continue_until_actions_are_done() -> None:
 
 
 def test_ending_turn_over_hand_limit_enters_discard_phase() -> None:
-    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(8)]
+    hand = [
+        Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1)
+        for index in range(8)
+    ]
     game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
     game.state.phase = GamePhase.ACTION
 
@@ -57,7 +63,10 @@ def test_ending_turn_over_hand_limit_enters_discard_phase() -> None:
 
 
 def test_discard_phase_at_hand_limit_only_allows_end_turn() -> None:
-    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(7)]
+    hand = [
+        Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1)
+        for index in range(7)
+    ]
     game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
     game.state.phase = GamePhase.ACTION
     game.state.actions_taken = game.state.rules.actions_per_turn
@@ -75,7 +84,10 @@ def test_discard_phase_at_hand_limit_only_allows_end_turn() -> None:
 
 
 def test_discard_phase_rejects_end_turn_until_hand_limit_is_met() -> None:
-    hand = [Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1) for index in range(8)]
+    hand = [
+        Card(id=f"money-{index}", name="$1", kind=CardKind.MONEY, value=1)
+        for index in range(8)
+    ]
     game = Game.new(player_count=2, seed=2, preset_hands=[hand, []])
     game.state.phase = GamePhase.DISCARD
 
