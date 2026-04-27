@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from importlib import import_module
+from pathlib import Path
 
 from dbreaker.strategies.aggressive import AggressiveStrategy
 from dbreaker.strategies.base import BaseStrategy
@@ -40,3 +42,13 @@ def default_registry() -> StrategyRegistry:
     registry.register(SetCompletionStrategy.name, SetCompletionStrategy)
     registry.register(OmniscientBaselineStrategy.name, OmniscientBaselineStrategy)
     return registry
+
+
+def create_strategy(spec: str, registry: StrategyRegistry | None = None) -> BaseStrategy:
+    if spec.startswith("neural:"):
+        checkpoint = spec.removeprefix("neural:")
+        if not checkpoint:
+            raise ValueError("neural strategy spec must include a checkpoint path")
+        neural_module = import_module("dbreaker.strategies.neural")
+        return neural_module.NeuralStrategy(Path(checkpoint))
+    return (registry or default_registry()).create(spec)
