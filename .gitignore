@@ -10,3 +10,16 @@ build/
 .coverage
 htmlcov/
 .DS_Store
+
+# Local app data (SQLite, job logs, downloaded artifacts)
+.dbreaker/
+
+# Profiling / scratch
+.tmp/
+
+# Frontend install and build output
+web/node_modules/
+web/dist/
+
+# Local RL / checkpoint dumps (large binaries)
+checkpoints/
