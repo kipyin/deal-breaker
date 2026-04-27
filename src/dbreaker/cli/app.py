@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 import typer
 
 from dbreaker.cli.play import run_interactive_play, run_scripted_play
+from dbreaker.experiments.benchmark import run_benchmark
 from dbreaker.experiments.tournament import GameProgress, run_tournament
 from dbreaker.replay.log_store import read_events
 
@@ -19,6 +20,8 @@ def _format_tournament_game_line(p: GameProgress, detail: bool) -> str:
         lead = f"winner={r.rankings[0]}"
     elif r.ended_by == "max_turns":
         lead = f"outcome=max_turns first={r.rankings[0]}"
+    elif r.ended_by == "stalemate":
+        lead = f"outcome=stalemate first={r.rankings[0]}"
     else:
         reason = (r.abort_reason or "unknown").replace("\n", " ")
         lead = f"outcome=aborted reason={reason}"
@@ -122,6 +125,13 @@ def tournament(
         min=1,
         help="Hard cap on engine step() calls per game (safety: avoids pathological long runs).",
     ),
+    stalemate_turns: int = typer.Option(
+        25,
+        "--stalemate-turns",
+        min=0,
+        help="End a game as stalemate if max completed sets and total asset value do not increase "
+        "for this many full turns. 0 disables (only max-turns cap ends non-wins).",
+    ),
     verbose: int = typer.Option(
         0,
         "--verbose",
@@ -159,9 +169,78 @@ def tournament(
         seed=seed,
         max_turns=max_turns,
         max_self_play_steps=max_self_play_steps,
+        stalemate_turns=stalemate_turns,
         on_game=on_cb,
     )
     typer.echo(report.to_markdown())
+
+
+@app.command()
+def benchmark(
+    games: int = typer.Option(200, min=0, help="Number of self-play games to run."),
+    players: int = typer.Option(4, "--players", min=2, max=5, help="Players per table."),
+    strategies: str = typer.Option(
+        "basic,basic,basic,basic",
+        "--strategies",
+        help="Comma-separated strategy names; seats rotate by game index (see tournament).",
+    ),
+    seed: int = typer.Option(1, help="Base seed; game n uses seed + n − 1 (same as tournament)."),
+    max_turns: int = typer.Option(
+        200,
+        "--max-turns",
+        min=1,
+        help="Stop self-play after this many full turns; games may end in a draw ranking.",
+    ),
+    max_self_play_steps: int = typer.Option(
+        30_000,
+        "--max-self-play-steps",
+        min=1,
+        help="Hard cap on engine step() calls per game.",
+    ),
+    stalemate_turns: int = typer.Option(
+        25,
+        "--stalemate-turns",
+        min=0,
+        help="Stalemate when no (sets, total asset) progress for this many full turns. 0 disables.",
+    ),
+    output: str = typer.Option(
+        "text",
+        "--output",
+        help="'text' for one key=value per line, 'json' for a single JSON object (script-friendly).",
+    ),
+) -> None:
+    """Measure simulator throughput (games/sec, steps/sec) and outcome counts for self-play.
+
+    Profiling example (saves a profile; inspect with ``python -m pstats``)::
+
+        uv run python -m cProfile -o .tmp/dbreaker-benchmark.prof -m dbreaker.cli.app benchmark --games 500
+
+    """
+    out = output.lower().strip()
+    if out not in {"text", "json"}:
+        typer.secho(
+            f"Error: --output must be 'text' or 'json', got {output!r}.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    names = [name.strip() for name in strategies.split(",") if name.strip()]
+    if not names:
+        typer.secho("Error: --strategies must list at least one strategy name.", err=True)
+        raise typer.Exit(2)
+    report = run_benchmark(
+        games=games,
+        player_count=players,
+        strategy_names=names,
+        seed=seed,
+        max_turns=max_turns,
+        max_self_play_steps=max_self_play_steps,
+        stalemate_turns=stalemate_turns,
+    )
+    if out == "json":
+        typer.echo(report.to_json())
+    else:
+        for line in report.to_text_lines():
+            typer.echo(line)
 
 
 @app.command()
@@ -169,3 +248,7 @@ def replay(path: Path) -> None:
     """Print events from a JSONL replay file."""
     for event in read_events(path):
         typer.echo(f"{event.turn}: {event.type} {event.reason_summary}")
+
+
+if __name__ == "__main__":
+    app()
