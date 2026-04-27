@@ -79,7 +79,9 @@ def build_inspector_state(
     obs = game.observation_for(viewer, omniscient=omniscient)
     name_by_id = build_card_name_map(obs)
     current = game.active_player_id
-    legal = game.legal_actions(current) if not game.is_terminal() else []
+    # Legal actions must be for the *viewer* (the seat the UI posts as), not
+    # always the active player. The active player can differ (e.g. response phase).
+    legal = game.legal_actions(viewer) if not game.is_terminal() else []
     legal_actions = [
         _serialize_legal_action(i, a, name_by_id) for i, a in enumerate(legal)
     ]
