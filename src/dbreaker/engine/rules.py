@@ -37,6 +37,8 @@ class RuleConfig:
     hand_limit: int = 7
     actions_per_turn: int = 3
     sets_to_win: int = 3
+    # When True, an empty draw pile is refilled by shuffling the discard pile (official rule).
+    reshuffle_discard_when_deck_empty: bool = True
 
     @classmethod
     def official(cls) -> RuleConfig:
@@ -63,4 +65,10 @@ class RuleConfig:
             hand_limit=int(mapping.get("hand_limit", defaults.hand_limit)),
             actions_per_turn=int(mapping.get("actions_per_turn", defaults.actions_per_turn)),
             sets_to_win=int(mapping.get("sets_to_win", defaults.sets_to_win)),
+            reshuffle_discard_when_deck_empty=bool(
+                mapping.get(
+                    "reshuffle_discard_when_deck_empty",
+                    defaults.reshuffle_discard_when_deck_empty,
+                )
+            ),
         )

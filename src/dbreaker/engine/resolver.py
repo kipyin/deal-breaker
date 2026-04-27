@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import random
 from dataclasses import dataclass
 
 from dbreaker.engine.actions import (
@@ -26,7 +28,7 @@ from dbreaker.engine.events import GameEvent
 from dbreaker.engine.payment import legal_payment_selections
 from dbreaker.engine.player import PlayerState
 from dbreaker.engine.rules import GamePhase
-from dbreaker.engine.state import GameState, PendingEffect
+from dbreaker.engine.state import GameState, PendingEffect, PendingPayment
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,14 +174,35 @@ def _is_actor_for_phase(state: GameState, player_id: str) -> bool:
     return player_id == state.current_player_id
 
 
+def _reshuffle_discard_into_deck(state: GameState) -> bool:
+    if state.deck or not state.discard or not state.rules.reshuffle_discard_when_deck_empty:
+        return False
+    cards = list(state.discard)
+    state.discard.clear()
+    seed_material = f"{state.seed!s}|{state.turn}|" + ",".join(c.id for c in cards)
+    digest = hashlib.sha256(seed_material.encode()).hexdigest()[:16]
+    random.Random(int(digest, 16)).shuffle(cards)
+    state.deck = cards
+    return True
+
+
+def _draw_up_to_n_from_pile(state: GameState, n: int) -> list[Card]:
+    drawn: list[Card] = []
+    for _ in range(n):
+        if not state.deck and not _reshuffle_discard_into_deck(state):
+            break
+        if not state.deck:
+            break
+        drawn.append(state.deck.pop())
+    return drawn
+
+
 def _resolve_draw(state: GameState, player_id: str) -> StepResult:
     if state.phase != GamePhase.DRAW:
         return _reject(state, player_id, DrawCards(), "not in draw phase")
     player = state.players[player_id]
     count = state.rules.empty_hand_draw_count if not player.hand else state.rules.draw_count
-    drawn: list[Card] = []
-    for _ in range(min(count, len(state.deck))):
-        drawn.append(state.deck.pop())
+    drawn = _draw_up_to_n_from_pile(state, count)
     for card in drawn:
         player = player.add_to_hand(card)
     state.players[player_id] = player
@@ -380,16 +403,78 @@ def _resolve_action_card(state: GameState, player_id: str, action: PlayActionCar
         return _start_pending_effect(state, player_id, action, "forced_deal")
     if subtype == ActionSubtype.DEAL_BREAKER:
         return _start_pending_effect(state, player_id, action, "deal_breaker")
+    if subtype == ActionSubtype.ITS_MY_BIRTHDAY:
+        return _resolve_its_my_birthday(state, player_id, action.card_id)
     return _reject(state, player_id, action, "unsupported action card")
+
+
+def _resolve_its_my_birthday(state: GameState, player_id: str, card_id: str) -> StepResult:
+    player, card = state.players[player_id].remove_from_hand(card_id)
+    if card is None:
+        return _reject(state, player_id, PlayActionCard(card_id), "card not in hand")
+    state.players[player_id] = player
+    state.discard.append(card)
+    state.actions_taken += 1
+
+    opponents = [pid for pid in state.player_order if pid != player_id]
+    if not opponents:
+        state.phase = state.next_phase_after_action()
+        return StepResult(
+            accepted=True,
+            events=[
+                GameEvent(
+                    type="birthday_played",
+                    turn=state.turn,
+                    player=player_id,
+                    action="its_my_birthday",
+                    card=card.name,
+                    reason_summary=f"{player_id} played {card.name} (no opponents).",
+                )
+            ],
+        )
+
+    payments = [
+        PendingPayment(
+            payer_id=oid,
+            receiver_id=player_id,
+            amount=2,
+            reason=card.name,
+        )
+        for oid in opponents
+    ]
+    state.pending_payment = payments[0]
+    state.pending_payment_queue = payments[1:]
+    state.phase = GamePhase.PAYMENT
+    first = state.pending_payment
+    return StepResult(
+        accepted=True,
+        events=[
+            GameEvent(
+                type="birthday_played",
+                turn=state.turn,
+                player=player_id,
+                action="its_my_birthday",
+                card=card.name,
+                reason_summary=f"{player_id} played {card.name}.",
+            ),
+            GameEvent(
+                type="payment_requested",
+                turn=state.turn,
+                player=player_id,
+                target=first.payer_id,
+                action="payment",
+                result=str(first.amount),
+                reason_summary=f"{first.payer_id} owes {first.amount}.",
+            ),
+        ],
+    )
 
 
 def _resolve_pass_go(state: GameState, player_id: str, card_id: str) -> StepResult:
     player, card = state.players[player_id].remove_from_hand(card_id)
     if card is None:
         return _reject(state, player_id, PlayActionCard(card_id), "card not in hand")
-    drawn: list[Card] = []
-    for _ in range(min(2, len(state.deck))):
-        drawn.append(state.deck.pop())
+    drawn = _draw_up_to_n_from_pile(state, 2)
     for drawn_card in drawn:
         player = player.add_to_hand(drawn_card)
     state.players[player_id] = player

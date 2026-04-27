@@ -43,6 +43,7 @@ class GameState:
     phase: GamePhase = GamePhase.DRAW
     has_drawn: bool = False
     pending_payment: PendingPayment | None = None
+    pending_payment_queue: list[PendingPayment] = field(default_factory=list)
     pending_effect: PendingEffect | None = None
     winner_id: str | None = None
     seed: int | None = None
@@ -66,6 +67,7 @@ class GameState:
         self.actions_taken = 0
         self.has_drawn = False
         self.pending_payment = None
+        self.pending_payment_queue.clear()
         self.pending_effect = None
         self.phase = GamePhase.DRAW
 
@@ -78,11 +80,16 @@ class GameState:
             amount=amount,
             reason=reason,
         )
+        self.pending_payment_queue.clear()
         self.phase = GamePhase.PAYMENT
 
     def clear_pending_payment(self) -> None:
-        self.pending_payment = None
-        self.phase = self.next_phase_after_action()
+        if self.pending_payment_queue:
+            self.pending_payment = self.pending_payment_queue.pop(0)
+            self.phase = GamePhase.PAYMENT
+        else:
+            self.pending_payment = None
+            self.phase = self.next_phase_after_action()
 
     def next_phase_after_action(self) -> GamePhase:
         if self.winner_id is not None:
@@ -103,6 +110,7 @@ def state_digest(state: GameState) -> tuple[Any, ...]:
         tuple(card.id for card in state.discard),
         tuple(_player_digest(state.players[player_id]) for player_id in state.player_order),
         _pending_payment_digest(state.pending_payment),
+        tuple(_pending_payment_digest(p) for p in state.pending_payment_queue),
         _pending_effect_digest(state.pending_effect),
         state.winner_id,
     )

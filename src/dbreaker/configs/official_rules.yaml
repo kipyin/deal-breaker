@@ -8,3 +8,4 @@ rules:
   hand_limit: 7
   actions_per_turn: 3
   sets_to_win: 3
+  reshuffle_discard_when_deck_empty: true

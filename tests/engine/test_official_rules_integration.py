@@ -151,6 +151,23 @@ def test_payment_choices_allow_overpay_and_transfer_assets() -> None:
     assert game.state.phase is GamePhase.ACTION
 
 
+def test_payment_phase_has_legal_pay_actions_when_nine_one_dollar_bills_needed() -> None:
+    """Regression: 8-card combo search must not leave PAYMENT with no legal pays."""
+    game = Game.new(player_count=2, seed=1, preset_hands=[[], []])
+    game.state.players["P1"] = PlayerState(
+        id="P1",
+        name="P1",
+        bank=[money(f"bill-{i}", 1) for i in range(9)],
+    )
+    game.state.players["P2"] = PlayerState(id="P2", name="P2")
+    game.state.set_pending_payment(payer_id="P1", receiver_id="P2", amount=9, reason="rent")
+
+    actions = game.legal_actions("P1")
+    assert len(actions) >= 1
+    assert all(isinstance(a, PayWithAssets) for a in actions)
+    assert any(len(a.card_ids) == 9 for a in actions)
+
+
 def test_pay_property_preserves_color_for_receiver() -> None:
     game = Game.new(player_count=2, seed=1, preset_hands=[[], []])
     game.state.phase = GamePhase.PAYMENT
@@ -323,3 +340,61 @@ def test_action_cards_and_just_say_no_chain() -> None:
         "target-g2",
         "target-g3",
     }
+
+
+def test_its_my_birthday_charges_each_opponent_two() -> None:
+    birthday = action("birthday", ActionSubtype.ITS_MY_BIRTHDAY, 2)
+    game = Game.new(
+        player_count=4,
+        seed=1,
+        preset_hands=[
+            [birthday, money("m1", 1)],
+            [],
+            [],
+            [],
+        ],
+        rules=RuleConfig(actions_per_turn=10),
+    )
+    for pid, bill_id in (("P2", "p2pay"), ("P3", "p3pay"), ("P4", "p4pay")):
+        p = game.state.players[pid]
+        game.state.players[pid] = p.add_to_bank(money(bill_id, 2))
+    game.state.phase = GamePhase.ACTION
+
+    assert any(
+        isinstance(a, PlayActionCard) and a.card_id == "birthday"
+        for a in game.legal_actions("P1")
+    )
+    assert game.step("P1", PlayActionCard("birthday")).accepted is True
+    assert game.state.phase is GamePhase.PAYMENT
+    assert game.state.pending_payment is not None
+    assert game.state.pending_payment.payer_id == "P2"
+    assert game.state.pending_payment.amount == 2
+    assert game.state.pending_payment.receiver_id == "P1"
+
+    assert game.step("P2", PayWithAssets(("p2pay",))).accepted is True
+    assert game.state.phase is GamePhase.PAYMENT
+    assert game.state.pending_payment.payer_id == "P3"
+
+    assert game.step("P3", PayWithAssets(("p3pay",))).accepted is True
+    assert game.state.pending_payment.payer_id == "P4"
+
+    assert game.step("P4", PayWithAssets(("p4pay",))).accepted is True
+    assert game.state.phase is GamePhase.ACTION
+    assert game.state.pending_payment is None
+    assert not game.state.pending_payment_queue
+
+    assert sum(card.value for card in game.state.players["P1"].bank) == 6
+    assert any(card.id == "birthday" for card in game.state.discard)
+    assert game.state.actions_taken == 1
+
+
+def test_empty_property_color_does_not_generate_rent_action() -> None:
+    rent_card = rent("rent-ru", (PropertyColor.RAILROAD, PropertyColor.UTILITY))
+    game = Game.new(player_count=2, seed=1, preset_hands=[[rent_card], []])
+    game.state.players["P1"].properties = {PropertyColor.UTILITY: []}
+    game.state.phase = GamePhase.ACTION
+
+    legal = game.legal_actions("P1")
+    assert not any(
+        isinstance(a, PlayRent) and a.color == PropertyColor.UTILITY for a in legal
+    )

@@ -88,7 +88,11 @@ def _rent_actions(
     double_cards = [
         card.id for card in player.hand if card.action_subtype == ActionSubtype.DOUBLE_THE_RENT
     ]
-    chargeable_colors = tuple(state.players[player_id].properties)
+    chargeable_colors = tuple(
+        color
+        for color, cards in state.players[player_id].properties.items()
+        if cards
+    )
     if PropertyColor.ANY not in colors:
         chargeable_colors = tuple(color for color in chargeable_colors if color in colors)
     actions: list[Action] = []
@@ -171,4 +175,8 @@ def _action_card_actions(
                 if opponent.is_full_set(color)
             )
         return actions
+    if subtype == ActionSubtype.ITS_MY_BIRTHDAY:
+        if len(state.player_order) <= 1:
+            return []
+        return [PlayActionCard(card_id=card_id)]
     return []

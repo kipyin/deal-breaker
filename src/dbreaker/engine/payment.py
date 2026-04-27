@@ -41,6 +41,10 @@ def legal_payment_selections(player: PlayerState, amount: int) -> list[PaymentSe
             if total >= amount:
                 key = tuple(sorted(card.id for card in group))
                 selections[key] = PaymentSelection(cards=list(group))
+    if not selections:
+        # e.g. debt needs 9+ small bills but only 8 are enumerated above — paying all
+        # assets is always a legal overpay when total_assets > amount.
+        return [PaymentSelection(cards=assets)]
     return sorted(
         selections.values(),
         key=lambda selection: (
