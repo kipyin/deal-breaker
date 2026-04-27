@@ -83,12 +83,13 @@ def collect_training_trajectory(
             else:
                 strategies.append(create_strategy(rng.choice(pool)))
 
-    game = Game.new(player_count=player_count, seed=seed)
+    game = Game.new(player_count=player_count, seed=seed, record_transitions=False)
     learner_id: str | None
     if use_mix:
         learner_id = game.state.player_order[learner_seat]
     else:
         learner_id = None
+    seat_by_player = {pid: idx for idx, pid in enumerate(game.state.player_order)}
 
     steps: list[TrajectoryStep] = []
     steps_taken = 0
@@ -102,7 +103,7 @@ def collect_training_trajectory(
         if not legal_actions:
             ended_by = "aborted"
             break
-        seat = game.state.player_order.index(player_id)
+        seat = seat_by_player[player_id]
         record = learner_id is None or player_id == learner_id
         if record:
             batch = encode_legal_actions(game.observation_for(player_id), legal_actions)

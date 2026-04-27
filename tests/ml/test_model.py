@@ -40,3 +40,37 @@ def test_action_sampling_and_evaluation_return_candidate_indices() -> None:
     assert tuple(evaluated.log_probs.shape) == (1,)
     assert tuple(evaluated.values.shape) == (1,)
     assert tuple(evaluated.entropies.shape) == (1,)
+
+
+def test_evaluate_action_indices_chunked_matches_reference() -> None:
+    torch.manual_seed(0)
+    game = Game.new(player_count=2, seed=1)
+    model = PolicyValueNetwork()
+    batches: list = []
+    indices: list[int] = []
+    for _ in range(4):
+        player_id = game.active_player_id
+        legal = game.legal_actions(player_id)
+        batch = encode_legal_actions(game.observation_for(player_id), legal)
+        choice = choose_action_index(model, batch, greedy=True)
+        batches.append(batch)
+        indices.append(choice.index)
+        game.step(player_id, legal[choice.index])
+
+    idx_tensor = torch.tensor(indices, dtype=torch.long)
+    chunked = evaluate_action_indices(model, batches, idx_tensor, chunk_size=2)
+
+    ref_log_probs: list = []
+    ref_values: list = []
+    ref_entropies: list = []
+    for batch, idx in zip(batches, indices, strict=True):
+        output = model.forward_batch(batch)
+        dist = torch.distributions.Categorical(logits=output.logits)
+        idx_t = torch.tensor(idx, dtype=torch.long)
+        ref_log_probs.append(dist.log_prob(idx_t))
+        ref_values.append(output.value)
+        ref_entropies.append(dist.entropy())
+
+    torch.testing.assert_close(chunked.log_probs, torch.stack(ref_log_probs))
+    torch.testing.assert_close(chunked.values, torch.stack(ref_values))
+    torch.testing.assert_close(chunked.entropies, torch.stack(ref_entropies))

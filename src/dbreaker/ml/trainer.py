@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,17 @@ class TrainingStats:
         return payload
 
 
+@dataclass
+class SelfPlayPhaseTimings:
+    """Wall-clock breakdown for :func:`train_self_play` (mutable; optional out-parameter)."""
+
+    rollout_seconds: float = 0.0
+    ppo_update_seconds: float = 0.0
+    total_seconds: float = 0.0
+    mean_legal_actions_per_step: float = 0.0
+    training_steps: int = 0
+
+
 def _discounted_returns(rewards: Any, gamma: float, torch: Any) -> Any:
     n = int(rewards.shape[0])
     if n == 0:
@@ -71,10 +83,16 @@ def train_self_play(
     checkpoint_out: Path | None = None,
     seed: int | None = None,
     model: PolicyValueNetwork | None = None,
+    phase_timings: SelfPlayPhaseTimings | None = None,
+    torch_seed: int | None = None,
 ) -> TrainingStats:
     torch = require_torch()
+    if torch_seed is not None:
+        torch.manual_seed(torch_seed)
     policy = model or PolicyValueNetwork()
     optimizer = torch.optim.Adam(policy.parameters(), lr=config.learning_rate)
+    total_t0 = time.perf_counter()
+    rollout_t0 = time.perf_counter()
     trajectories = [
         collect_training_trajectory(
             policy,
@@ -88,6 +106,7 @@ def train_self_play(
         )
         for game_index in range(config.games)
     ]
+    rollout_seconds = time.perf_counter() - rollout_t0
     steps = [step for trajectory in trajectories for step in trajectory.steps]
     rewards_dense = [reward for trajectory in trajectories for reward in trajectory.rewards]
     sparse_parts: list[float] = []
@@ -100,6 +119,7 @@ def train_self_play(
             sparse_terminal_rewards_for_steps(trajectory.steps, reward_by_player)
         )
     mean_entropy: float | None = None
+    ppo_t0 = time.perf_counter()
     if steps:
         old_log_probs = torch.tensor([step.log_prob for step in steps], dtype=torch.float32)
         old_values = torch.tensor([step.value for step in steps], dtype=torch.float32)
@@ -134,6 +154,7 @@ def train_self_play(
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+    ppo_update_seconds = time.perf_counter() - ppo_t0
     mean_reward = sum(rewards_dense) / len(rewards_dense) if rewards_dense else 0.0
     stats = TrainingStats(
         games=config.games,
@@ -144,4 +165,18 @@ def train_self_play(
     )
     if checkpoint_out is not None:
         save_checkpoint(checkpoint_out, model=policy, training_stats=stats.as_dict())
+    total_seconds = time.perf_counter() - total_t0
+    if phase_timings is not None:
+        legal_sum = 0
+        for trajectory in trajectories:
+            for step in trajectory.steps:
+                legal_sum += len(step.batch.actions)
+        n_steps = len(steps)
+        phase_timings.rollout_seconds = rollout_seconds
+        phase_timings.ppo_update_seconds = ppo_update_seconds
+        phase_timings.total_seconds = total_seconds
+        phase_timings.training_steps = n_steps
+        phase_timings.mean_legal_actions_per_step = (
+            float(legal_sum) / float(n_steps) if n_steps else 0.0
+        )
     return stats
