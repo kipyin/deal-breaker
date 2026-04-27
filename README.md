@@ -8,6 +8,7 @@ self-play tournaments, strategy comparison, replay, and debug logs.
 ```bash
 uv run dbreaker --help
 uv run dbreaker play --players 3
+printf 'draw\nend\n' | uv run dbreaker play --commands - --output text
 uv run dbreaker tournament --players 4 --games 100
 uv run dbreaker replay runs/latest/games/game-1.jsonl
 ```

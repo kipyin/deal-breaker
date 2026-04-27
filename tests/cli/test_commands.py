@@ -1,7 +1,13 @@
-from dbreaker.cli.commands import parse_command
+from dbreaker.cli.commands import (
+    format_shortcut_help,
+    format_shortcut_help_all,
+    format_shortcut_help_topic,
+    parse_command,
+)
 from dbreaker.engine.actions import (
     BankCard,
     DiscardCard,
+    DrawCards,
     EndTurn,
     PayWithAssets,
     PlayActionCard,
@@ -15,6 +21,10 @@ from dbreaker.engine.cards import PropertyColor
 def test_parse_bank_and_end_commands() -> None:
     assert parse_command("bank money-1") == BankCard(card_id="money-1")
     assert parse_command("end") == EndTurn()
+
+
+def test_parse_draw_command() -> None:
+    assert parse_command("draw") == DrawCards()
 
 
 def test_parse_play_rent_command_with_target() -> None:
@@ -62,3 +72,13 @@ def test_parse_property_and_action_shortcuts() -> None:
         target_player_id="P2",
         color=PropertyColor.BLUE,
     )
+
+
+def test_format_shortcut_help_all_matches_legacy_alias() -> None:
+    assert format_shortcut_help() == format_shortcut_help_all()
+
+
+def test_format_shortcut_help_topic_smoke() -> None:
+    assert "draw" in format_shortcut_help_topic("basic").lower()
+    assert "pay" in format_shortcut_help_topic("payment").lower()
+    assert "play" in format_shortcut_help_topic("rent").lower()
