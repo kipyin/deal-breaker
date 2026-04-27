@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from operator import itemgetter
 from typing import Any
 
 from dbreaker.engine.cards import Card, PropertyColor
 from dbreaker.engine.player import PlayerState
 from dbreaker.engine.rules import GamePhase, RuleConfig
+
+# StrEnum and PropertyColor order matches their string values; use the enum as key, not
+# `.value` (saves an expensive per-comparison `enum.property` on hot digest paths).
+_COLOR_SORT_KEY = itemgetter(0)
 
 
 @dataclass(slots=True)
@@ -123,12 +128,12 @@ def _player_digest(player: PlayerState) -> tuple[Any, ...]:
         tuple(card.id for card in player.bank),
         tuple(
             (color.value, tuple(card.id for card in cards))
-            for color, cards in sorted(player.properties.items(), key=lambda item: item[0].value)
+            for color, cards in sorted(player.properties.items(), key=_COLOR_SORT_KEY)
         ),
         tuple(
             (color.value, tuple(card.id for card in cards))
             for color, cards in sorted(
-                player.property_attachments.items(), key=lambda item: item[0].value
+                player.property_attachments.items(), key=_COLOR_SORT_KEY
             )
         ),
     )
