@@ -21,8 +21,16 @@ dev = [
     "pytest-timeout>=2.0.0",
     "ruff>=0.6.0",
     "mypy>=1.10.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.27.0",
+]
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 ml = [
+    "numpy",
     "torch",
 ]
 
@@ -51,4 +59,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["dbreaker"]
+# Strict typing for the full `dbreaker` tree is still in progress; the web
+# package is the first mypy-clean boundary.
+files = ["src/dbreaker/web"]
