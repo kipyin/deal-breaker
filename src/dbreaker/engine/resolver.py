@@ -37,6 +37,11 @@ class StepResult:
     events: list[GameEvent]
 
 
+def _register_counted_actions(state: GameState, count: int) -> None:
+    state.actions_taken += count
+    state.consecutive_rearranges = 0
+
+
 def resolve_action(state: GameState, player_id: str, action: Action) -> StepResult:
     if state.winner_id is not None:
         return _reject(state, player_id, action, "game already ended")
@@ -98,7 +103,7 @@ def resolve_action(state: GameState, player_id: str, action: Action) -> StepResu
         if card is None:
             return _reject(state, player_id, action, "card not in hand")
         state.players[player_id] = player.add_to_bank(card)
-        state.actions_taken += 1
+        _register_counted_actions(state, 1)
         state.phase = state.next_phase_after_action()
         return StepResult(
             accepted=True,
@@ -126,7 +131,7 @@ def resolve_action(state: GameState, player_id: str, action: Action) -> StepResu
             return _reject(state, player_id, action, "property cannot use that color")
         updated_player = player.add_property(card, action.color)
         state.players[player_id] = updated_player
-        state.actions_taken += 1
+        _register_counted_actions(state, 1)
         state.phase = state.next_phase_after_action()
         events = [
             GameEvent(
@@ -303,11 +308,14 @@ def _receive_paid_asset(
 def _resolve_rearrange(state: GameState, player_id: str, action: RearrangeProperty) -> StepResult:
     if state.rules.property_rearrange_timing.value == "never":
         return _reject(state, player_id, action, "property rearrange disabled")
+    if state.consecutive_rearranges >= state.rules.max_consecutive_rearranges:
+        return _reject(state, player_id, action, "too many consecutive rearranges")
     player = state.players[player_id]
     updated = player.set_property_color(action.card_id, action.color)
     if updated is None:
         return _reject(state, player_id, action, "property cannot use that color")
     state.players[player_id] = updated
+    state.consecutive_rearranges += 1
     return StepResult(
         accepted=True,
         events=[
@@ -351,7 +359,7 @@ def _resolve_rent(state: GameState, player_id: str, action: PlayRent) -> StepRes
         amount *= 2
     state.players[player_id] = player
     state.discard.append(rent_card)
-    state.actions_taken += cost
+    _register_counted_actions(state, cost)
     state.pending_effect = PendingEffect(
         kind="payment",
         actor_id=player_id,
@@ -410,7 +418,7 @@ def _resolve_its_my_birthday(state: GameState, player_id: str, card_id: str) -> 
         return _reject(state, player_id, PlayActionCard(card_id), "card not in hand")
     state.players[player_id] = player
     state.discard.append(card)
-    state.actions_taken += 1
+    _register_counted_actions(state, 1)
 
     opponents = [pid for pid in state.player_order if pid != player_id]
     if not opponents:
@@ -475,7 +483,7 @@ def _resolve_pass_go(state: GameState, player_id: str, card_id: str) -> StepResu
         player = player.add_to_hand(drawn_card)
     state.players[player_id] = player
     state.discard.append(card)
-    state.actions_taken += 1
+    _register_counted_actions(state, 1)
     state.phase = state.next_phase_after_action()
     return StepResult(
         accepted=True,
@@ -510,7 +518,7 @@ def _resolve_building(
         return _reject(state, player_id, PlayActionCard(card_id), "card not in hand")
     state.players[player_id] = player.add_property_attachment(card, color)
     state.discard.append(card)
-    state.actions_taken += 1
+    _register_counted_actions(state, 1)
     state.phase = state.next_phase_after_action()
     return StepResult(
         accepted=True,
@@ -548,7 +556,7 @@ def _start_pending_effect(
         return _reject(state, player_id, action, "card not in hand")
     state.players[player_id] = player
     state.discard.append(card)
-    state.actions_taken += 1
+    _register_counted_actions(state, 1)
     state.pending_effect = PendingEffect(
         kind=kind,
         actor_id=player_id,

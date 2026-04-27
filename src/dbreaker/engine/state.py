@@ -45,6 +45,7 @@ class GameState:
     current_player_index: int = 0
     turn: int = 1
     actions_taken: int = 0
+    consecutive_rearranges: int = 0
     phase: GamePhase = GamePhase.DRAW
     has_drawn: bool = False
     pending_payment: PendingPayment | None = None
@@ -70,6 +71,7 @@ class GameState:
         self.current_player_index = (self.current_player_index + 1) % len(self.player_order)
         self.turn += 1
         self.actions_taken = 0
+        self.consecutive_rearranges = 0
         self.has_drawn = False
         self.pending_payment = None
         self.pending_payment_queue.clear()
@@ -111,6 +113,7 @@ def state_digest(state: GameState) -> tuple[Any, ...]:
         state.active_player_id,
         state.phase.value,
         state.actions_taken,
+        state.consecutive_rearranges,
         tuple(card.id for card in state.deck),
         tuple(card.id for card in state.discard),
         tuple(_player_digest(state.players[player_id]) for player_id in state.player_order),

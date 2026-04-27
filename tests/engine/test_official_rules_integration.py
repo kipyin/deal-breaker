@@ -398,3 +398,68 @@ def test_empty_property_color_does_not_generate_rent_action() -> None:
     assert not any(
         isinstance(a, PlayRent) and a.color == PropertyColor.UTILITY for a in legal
     )
+
+
+def test_rearrange_stall_cap_rejects_unbroken_chain() -> None:
+    wild = card(
+        "wild-bg",
+        CardKind.WILD_PROPERTY,
+        4,
+        colors=(PropertyColor.BLUE, PropertyColor.GREEN),
+    )
+    game = Game.new(
+        player_count=2,
+        seed=1,
+        preset_hands=[[], []],
+        rules=RuleConfig(
+            actions_per_turn=10,
+            max_consecutive_rearranges=3,
+            property_rearrange_timing=PropertyRearrangeTiming.ANYTIME_ON_TURN,
+        ),
+    )
+    game.state.players["P1"] = PlayerState(
+        id="P1", name="P1", hand=[], properties={PropertyColor.GREEN: [wild]}
+    )
+    game.state.phase = GamePhase.ACTION
+
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.BLUE)).accepted is True
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.GREEN)).accepted is True
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.BLUE)).accepted is True
+    assert game.state.consecutive_rearranges == 3
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.GREEN)).accepted is False
+    assert not any(
+        isinstance(a, RearrangeProperty) and a.card_id == "wild-bg"
+        for a in game.legal_actions("P1")
+    )
+
+
+def test_counted_action_resets_rearrange_streak() -> None:
+    wild = card(
+        "wild-bg",
+        CardKind.WILD_PROPERTY,
+        4,
+        colors=(PropertyColor.BLUE, PropertyColor.GREEN),
+    )
+    bill = money("m1", 1)
+    game = Game.new(
+        player_count=2,
+        seed=1,
+        preset_hands=[[], []],
+        rules=RuleConfig(
+            actions_per_turn=10,
+            max_consecutive_rearranges=3,
+            property_rearrange_timing=PropertyRearrangeTiming.ANYTIME_ON_TURN,
+        ),
+    )
+    game.state.players["P1"] = PlayerState(
+        id="P1", name="P1", hand=[bill], properties={PropertyColor.GREEN: [wild]}
+    )
+    game.state.phase = GamePhase.ACTION
+
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.BLUE)).accepted is True
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.GREEN)).accepted is True
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.BLUE)).accepted is True
+    assert game.state.consecutive_rearranges == 3
+    assert game.step("P1", BankCard("m1")).accepted is True
+    assert game.state.consecutive_rearranges == 0
+    assert game.step("P1", RearrangeProperty("wild-bg", PropertyColor.GREEN)).accepted is True

@@ -72,11 +72,14 @@ def legal_actions(state: GameState, player_id: str) -> list[Action]:
                 actions.extend(_rent_actions(state, player_id, card.id, card.colors))
         elif card.kind == CardKind.ACTION and card.action_subtype is not None and actions_left > 0:
             actions.extend(_action_card_actions(state, player_id, card.id, card.action_subtype))
-    for color, cards in player.properties.items():
-        for card in cards:
-            for playable_color in card.playable_colors:
-                if playable_color != color:
-                    actions.append(RearrangeProperty(card_id=card.id, color=playable_color))
+    if state.consecutive_rearranges < state.rules.max_consecutive_rearranges:
+        for color, cards in player.properties.items():
+            for card in cards:
+                for playable_color in card.playable_colors:
+                    if playable_color != color:
+                        actions.append(
+                            RearrangeProperty(card_id=card.id, color=playable_color)
+                        )
     actions.append(EndTurn())
     return actions
 
