@@ -565,25 +565,27 @@ npm run build
 
 ### Play table layout (manual visual regression)
 
-Automated `vitest` + jsdom tests cover `PlayTable` content and actions but cannot
-assert pixel overlap on the prototype arcade table (`web/src/index.css` lane
-tokens). After CSS or layout changes to the play surface, open **Play** in the
-dev app and spot-check the following. Resize the browser between checks.
+Automated `vitest` + jsdom tests cover `PlayTable` content, actions, and the
+required `Table state`, `Command rail`, and `Hand dock` landmarks. They cannot
+assert pixel overlap on the arcade felt, so after CSS or layout changes to the
+play surface, open **Play** in the dev app and spot-check the following. Resize
+the browser between checks.
 
 | State | What to verify |
 | --- | --- |
-| **Normal** | Default mid-game view (few hand cards, typical bank/properties). The center row (draw / discard / action zone) stays between the opponent rail and the hand; **END TURN** sits in the action column, not over the hand or side panels. |
-| **Dense** | Stress-test hands and long copy (e.g. many bank tokens and property rows in one session). Hand uses a flatter fan or a horizontal scroller; cards do not cover piles or the primary button. |
-| **Small** | Viewport width about **760–900px** (table has a minimum width; horizontal scroll on the frame is acceptable). Lanes still clear: no pile/action/primary control overlap with the hand. |
-| **Large** | About **1280×720** (or max frame). Layout matches the reference arcade composition; no wasted collision between `--play-lane-center-bottom` and the hand. |
-| **Selected card** | Open the hand card popover; it stays above the hand (`card-action-popover` vs `--play-lane-hand`) and does not cover the draw/discard piles. |
-| **Flash** | Trigger a `flashMessage` (e.g. invalid action) so the alert banner appears in the action zone; it remains inside the action column and does not sit under opponent HUD chrome. |
+| **Normal** | Default mid-game view (few hand cards, typical bank/properties). Opponents, draw/discard piles, bank, and properties sit in the table-state area; **END TURN** stays in the command rail. |
+| **Dense** | Stress-test hands and long copy (e.g. many bank tokens and property rows in one session). The hand dock scrolls horizontally when needed, while piles, selected-card actions, and the primary button remain visible. |
+| **Medium / small** | Around **760–900px**, then narrower mobile widths. The command rail drops below the table state before columns become cramped; the hand dock remains a separate bottom region. |
+| **Large** | About **1280×720** (or max frame). The surface reads as one command-center table: table state on the left, command rail on the right, hand dock along the bottom. |
+| **Selected card** | Select a hand card. Its actions appear in the command rail with pending, last action, flash messages, and the primary action still visible in the same rail. |
+| **Flash / pending** | Trigger a `flashMessage` and a pending response. The alert, pending callout, and last-action callout remain inside the command rail without hiding one another. |
 
-Related classes and tokens: `play-table__inner--prototype`, `play-center-row`,
-`action-zone__primary`, `player-area__hand-block` (`data-hand-count`,
-`data-hand-dense`), and `--play-lane-*` / `--play-zone-bottom` in `index.css`.
-`web/src/features/play/PlayTable.test.tsx` should continue to pass; extend it
-for DOM-level landmarks when adding new required wrappers.
+Related classes and tokens: `play-command-center`, `play-table-state`,
+`play-command-rail`, `player-area__hand-rail` (`data-hand-count`,
+`data-hand-dense`), `action-zone__grid`, and `action-zone__primary` in
+`web/src/styles/07-active-play-surface.css`. Keep
+`web/src/features/play/PlayTable.test.tsx` passing and extend it when adding new
+required landmarks or action rail states.
 
 For local UI development, `uv run dbreaker web` is the default one-command launcher.
 It serves the API on `http://127.0.0.1:8765` and the Vite frontend on
