@@ -25,7 +25,7 @@ from dbreaker.engine.cards import (
     PropertyColor,
 )
 from dbreaker.engine.events import GameEvent
-from dbreaker.engine.payment import legal_payment_selections
+from dbreaker.engine.payment import is_legal_payment_selection
 from dbreaker.engine.player import PlayerState
 from dbreaker.engine.rules import GamePhase
 from dbreaker.engine.state import GameState, PendingEffect, PendingPayment
@@ -258,11 +258,7 @@ def _resolve_payment(state: GameState, player_id: str, action: PayWithAssets) ->
     if player_id != pending.payer_id:
         return _reject(state, player_id, action, "not payment payer")
     payer = state.players[pending.payer_id]
-    legal_ids = {
-        tuple(card.id for card in selection.cards)
-        for selection in legal_payment_selections(payer, pending.amount)
-    }
-    if tuple(action.card_ids) not in legal_ids:
+    if not is_legal_payment_selection(payer, tuple(action.card_ids), pending.amount):
         return _reject(state, player_id, action, "illegal payment selection")
 
     receiver = state.players[pending.receiver_id]
