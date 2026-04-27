@@ -17,6 +17,7 @@ from dbreaker.experiments.rl_search import (
 )
 from dbreaker.experiments.tournament import run_tournament
 from dbreaker.ml.trainer import train_self_play
+from dbreaker.ml.trajectory import SelfPlayTrajectory
 from dbreaker.web import artifact_service
 from dbreaker.web import db as db_mod
 from dbreaker.web import training_service as tr
@@ -248,13 +249,32 @@ class JobService:
     def _run_training_job(self, job_id: str, row: db_mod.JobRow) -> None:
         cfg = TrainingJobRequest.model_validate_json(row.config_json)
         ch = self._resolve_champion_path(cfg.champion_checkpoint_id)
+        resume = self._resolve_champion_path(cfg.resume_from_checkpoint_id)
         ppo = tr.ppo_config_from_request(cfg, ch)
         ckpt_id, rel_pt, rel_json = tr.training_artifact_ids(
             job_id, cfg.player_count, cfg.checkpoint_label
         )
         out_pt = self._config.artifact_root / rel_pt
         out_pt.parent.mkdir(parents=True, exist_ok=True)
-        stats = self._train_fn(ppo, checkpoint_out=out_pt, seed=cfg.seed)
+
+        def _on_game(game_index: int, trajectory: SelfPlayTrajectory) -> None:
+            n = len(trajectory.steps)
+            rewards = trajectory.rewards
+            mr = sum(rewards) / len(rewards) if rewards else 0.0
+            self._append_log(
+                self._log_rel(row),
+                f"game {game_index + 1}/{cfg.games} learner_steps={n} "
+                f"ended_by={trajectory.ended_by} mean_reward={mr:.4f}",
+            )
+
+        stats = self._train_fn(
+            ppo,
+            checkpoint_out=out_pt,
+            seed=cfg.seed,
+            from_checkpoint=resume,
+            game_seed_offset=cfg.game_seed_offset,
+            on_game_complete=_on_game,
+        )
         training = stats.as_dict()
         tr.write_training_manifest(rel_json, self._config.artifact_root, training)
         spec = f"neural:{rel_pt}"

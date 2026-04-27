@@ -65,6 +65,15 @@ class TrainingJobRequest(BaseModel):
         ]
     )
     champion_checkpoint_id: str | None = None
+    resume_from_checkpoint_id: str | None = Field(
+        default=None,
+        description="Initial policy weights (continuation training; distinct from champion opponent pool).",
+    )
+    game_seed_offset: int = Field(
+        default=0,
+        ge=0,
+        description="Added to per-game seeds; use cumulative prior games when batching training jobs.",
+    )
     checkpoint_label: str | None = None
 
 
