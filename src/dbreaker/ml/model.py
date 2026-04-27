@@ -55,7 +55,7 @@ if nn is not None:
             self,
             observation_dim: int = OBSERVATION_FEATURE_DIM,
             action_dim: int = ACTION_FEATURE_DIM,
-            hidden_dim: int = 64,
+            hidden_dim: int = 128,
         ) -> None:
             super().__init__()
             self.observation_dim = observation_dim

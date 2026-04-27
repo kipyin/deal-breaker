@@ -22,11 +22,12 @@ from dbreaker.engine.cards import (
     Card,
     CardKind,
     PropertyColor,
+    RENT_LADDER_BY_COLOR,
 )
-from dbreaker.engine.observation import Observation
+from dbreaker.engine.observation import Observation, OpponentObservation
 from dbreaker.engine.rules import GamePhase
 
-FEATURE_SCHEMA_VERSION = "dbreaker-ml-features-v1"
+FEATURE_SCHEMA_VERSION = "dbreaker-ml-features-v2"
 
 _PHASES = tuple(GamePhase)
 _CARD_KINDS = tuple(CardKind)
@@ -45,12 +46,16 @@ _ACTION_TYPES = (
     EndTurn,
     RespondJustSayNo,
 )
+_PENDING_KINDS = ("payment", "sly_deal", "forced_deal", "deal_breaker")
+_ACTION_EXTRA_DIM = 16
 _T = TypeVar("_T")
 
 _OBS_NUMERIC_DIM = 16
 _CARD_SUMMARY_DIM = len(_CARD_KINDS) + len(_ACTION_SUBTYPES) + len(_COLORS) + 2
 _OPPONENT_SUMMARY_DIM = 4
-OBSERVATION_FEATURE_DIM = (
+
+# v1-style base block
+_OBS_BASE_DIM = (
     _OBS_NUMERIC_DIM
     + len(_PHASES)
     + _CARD_SUMMARY_DIM
@@ -59,13 +64,31 @@ OBSERVATION_FEATURE_DIM = (
     + _OPPONENT_SUMMARY_DIM
 )
 
+_PER_COLOR_OWN_DIM = 4
+_PER_COLOR_OPP_DIM = 3
+_OPPONENT_SLOT_COUNT = 4
+_OPPONENT_SLOT_DIM = 5
+# kind one-hot (4) + role (3) + amount/20 + negated + high-stakes
+_PENDING_EXTRA_DIM = len(_PENDING_KINDS) + 3 + 3
+_HAND_HEURISTIC_DIM = 8
+
+OBSERVATION_EXTRA_DIM = (
+    len(_SET_COLORS) * _PER_COLOR_OWN_DIM
+    + len(_SET_COLORS) * _PER_COLOR_OPP_DIM
+    + _OPPONENT_SLOT_COUNT * _OPPONENT_SLOT_DIM
+    + _PENDING_EXTRA_DIM
+    + _HAND_HEURISTIC_DIM
+)
+OBSERVATION_FEATURE_DIM = _OBS_BASE_DIM + OBSERVATION_EXTRA_DIM
+
 _ACTION_NUMERIC_DIM = 9
-ACTION_FEATURE_DIM = (
+_ACTION_V1_DIM = (
     len(_ACTION_TYPES)
     + _ACTION_NUMERIC_DIM
     + _CARD_SUMMARY_DIM
     + len(_COLORS)
 )
+ACTION_FEATURE_DIM = _ACTION_V1_DIM + _ACTION_EXTRA_DIM
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +100,57 @@ class EncodedActionBatch:
 
 
 def encode_observation(observation: Observation) -> tuple[float, ...]:
+    base = _encode_observation_base(observation)
+    assert len(base) == _OBS_BASE_DIM, f"{len(base)} != {_OBS_BASE_DIM}"
+    extra = (
+        _encode_per_color_own(observation)
+        + _encode_per_color_opponent_aggregate(observation)
+        + _encode_opponent_slots(observation)
+        + _encode_pending_context(observation)
+        + _encode_hand_heuristics(observation)
+    )
+    assert len(extra) == OBSERVATION_EXTRA_DIM, f"{len(extra)} != {OBSERVATION_EXTRA_DIM}"
+    return base + extra
+
+
+def encode_action(observation: Observation, action: Action) -> tuple[float, ...]:
+    related_cards = _related_cards(observation, action)
+    action_color = _action_color(action)
+    numeric = (
+        _scale(len(related_cards), 10.0),
+        _scale(sum(card.value for card in related_cards), 30.0),
+        _scale(_payment_card_count(action), 10.0),
+        _scale(_target_player_index(observation, action), 5.0),
+        1.0 if isinstance(action, RespondJustSayNo) and action.accept else 0.0,
+        1.0 if isinstance(action, RespondJustSayNo) and not action.accept else 0.0,
+        1.0 if _has_target_player(action) else 0.0,
+        1.0 if action_color is not None else 0.0,
+        1.0 if isinstance(action, EndTurn) else 0.0,
+    )
+    v1 = (
+        _action_type_one_hot(action)
+        + numeric
+        + _card_summary(related_cards)
+        + _one_hot(action_color, _COLORS)
+    )
+    assert len(v1) == _ACTION_V1_DIM
+    extra = _encode_action_impact(observation, action)
+    assert len(extra) == _ACTION_EXTRA_DIM
+    return v1 + extra
+
+
+def encode_legal_actions(
+    observation: Observation, legal_actions: list[Action]
+) -> EncodedActionBatch:
+    return EncodedActionBatch(
+        schema_version=FEATURE_SCHEMA_VERSION,
+        observation_features=encode_observation(observation),
+        action_features=tuple(encode_action(observation, action) for action in legal_actions),
+        actions=tuple(legal_actions),
+    )
+
+
+def _encode_observation_base(observation: Observation) -> tuple[float, ...]:
     own_property_count = sum(len(cards) for cards in observation.properties.values())
     own_completed_sets = _completed_set_count(observation.properties)
     opponent_hand_total = sum(o.hand_size for o in observation.opponents.values())
@@ -123,40 +197,242 @@ def encode_observation(observation: Observation) -> tuple[float, ...]:
     return features[:-_OPPONENT_SUMMARY_DIM] + opponent_features
 
 
-def encode_action(observation: Observation, action: Action) -> tuple[float, ...]:
-    related_cards = _related_cards(observation, action)
-    action_color = _action_color(action)
-    numeric = (
-        _scale(len(related_cards), 10.0),
-        _scale(sum(card.value for card in related_cards), 30.0),
-        _scale(_payment_card_count(action), 10.0),
-        _scale(_target_player_index(observation, action), 5.0),
-        1.0 if isinstance(action, RespondJustSayNo) and action.accept else 0.0,
-        1.0 if isinstance(action, RespondJustSayNo) and not action.accept else 0.0,
-        1.0 if _has_target_player(action) else 0.0,
-        1.0 if action_color is not None else 0.0,
-        1.0 if isinstance(action, EndTurn) else 0.0,
-    )
-    features = (
-        _action_type_one_hot(action)
-        + numeric
-        + _card_summary(related_cards)
-        + _one_hot(action_color, _COLORS)
-    )
-    if len(features) != ACTION_FEATURE_DIM:
-        raise AssertionError("action feature dimension mismatch")
-    return features
+def _encode_per_color_own(observation: Observation) -> tuple[float, ...]:
+    out: list[float] = []
+    for color in _SET_COLORS:
+        need = SET_SIZE_BY_COLOR[color]
+        cnt = len(observation.properties.get(color, ()))
+        completed = 1.0 if cnt >= need else 0.0
+        missing = _scale(max(0, need - cnt), 5.0)
+        progress = min(1.0, float(cnt) / float(need)) if need else 0.0
+        rent = _scale(_rent_from_property_count(color, cnt), 20.0)
+        out.extend((completed, missing, progress, rent))
+    return tuple(out)
 
 
-def encode_legal_actions(
-    observation: Observation, legal_actions: list[Action]
-) -> EncodedActionBatch:
-    return EncodedActionBatch(
-        schema_version=FEATURE_SCHEMA_VERSION,
-        observation_features=encode_observation(observation),
-        action_features=tuple(encode_action(observation, action) for action in legal_actions),
-        actions=tuple(legal_actions),
+def _encode_per_color_opponent_aggregate(observation: Observation) -> tuple[float, ...]:
+    opps = list(observation.opponents.values())
+    out: list[float] = []
+    for color in _SET_COLORS:
+        need = SET_SIZE_BY_COLOR[color]
+        counts = [len(opp.properties.get(color, ())) for opp in opps] if opps else [0]
+        max_cnt = max(counts) if counts else 0
+        max_prog = min(1.0, float(max_cnt) / float(need)) if need else 0.0
+        one_away = sum(1 for c in counts if need > 1 and c == need - 1)
+        one_away_scaled = _scale(one_away, 3.0)
+        any_complete = 1.0 if any(c >= need for c in counts) and need else 0.0
+        out.extend((max_prog, one_away_scaled, any_complete))
+    return tuple(out)
+
+
+def _encode_opponent_slots(observation: Observation) -> tuple[float, ...]:
+    opps = _opponents_sorted_by_threat(observation)
+    slots: list[tuple[float, ...]] = []
+    for i in range(_OPPONENT_SLOT_COUNT):
+        if i < len(opps):
+            o = opps[i]
+            tot_props = sum(len(cards) for cards in o.properties.values())
+            max_pressure = 0.0
+            for c in _SET_COLORS:
+                need = SET_SIZE_BY_COLOR[c]
+                n = len(o.properties.get(c, ()))
+                max_pressure = max(max_pressure, min(1.0, float(n) / float(need)))
+            slots.append(
+                (
+                    _scale(o.hand_size, 20.0),
+                    _scale(o.bank_value, 100.0),
+                    _scale(o.completed_sets, 5.0),
+                    _scale(tot_props, 30.0),
+                    max_pressure,
+                )
+            )
+        else:
+            slots.append((0.0, 0.0, 0.0, 0.0, 0.0))
+    flat: list[float] = []
+    for t in slots:
+        flat.extend(t)
+    return tuple(flat)
+
+
+def _opponents_sorted_by_threat(observation: Observation) -> list[OpponentObservation]:
+    opps: list[OpponentObservation] = list(observation.opponents.values())
+
+    def sort_key(o: OpponentObservation) -> tuple[int, int, int, int]:
+        tot = sum(len(cards) for cards in o.properties.values())
+        return (-o.completed_sets, -tot, -o.bank_value, -o.hand_size)
+
+    return sorted(opps, key=sort_key)
+
+
+def _encode_pending_context(observation: Observation) -> tuple[float, ...]:
+    p = observation.pending
+    if p is None:
+        return (0.0,) * _PENDING_EXTRA_DIM
+    kind_oh = _one_hot_str(p.kind, _PENDING_KINDS)
+    is_actor = 1.0 if p.actor_id == observation.player_id else 0.0
+    is_target = 1.0 if p.target_id == observation.player_id else 0.0
+    is_respond = 1.0 if p.respond_player_id == observation.player_id else 0.0
+    amount = _scale(p.amount, 20.0)
+    neg = 1.0 if p.negated else 0.0
+    high = 1.0 if p.amount >= 5 or p.kind == "deal_breaker" else 0.0
+    return kind_oh + (is_actor, is_target, is_respond, amount, neg, high)
+
+
+def _one_hot_str(value: str, choices: tuple[str, ...]) -> tuple[float, ...]:
+    return tuple(1.0 if value == choice else 0.0 for choice in choices)
+
+
+def _encode_hand_heuristics(observation: Observation) -> tuple[float, ...]:
+    h = observation.hand
+    st = ActionSubtype
+    return (
+        _scale(sum(1 for c in h if c.action_subtype == st.JUST_SAY_NO), 3.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.DOUBLE_THE_RENT), 2.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.PASS_GO), 10.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.SLY_DEAL), 3.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.FORCED_DEAL), 3.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.DEAL_BREAKER), 2.0),
+        _scale(sum(1 for c in h if c.action_subtype == st.DEBT_COLLECTOR), 3.0),
+        _scale(
+            sum(
+                1
+                for c in h
+                if c.action_subtype in (ActionSubtype.HOUSE, ActionSubtype.HOTEL)
+            ),
+            3.0,
+        ),
     )
+
+
+def _encode_action_impact(observation: Observation, action: Action) -> tuple[float, ...]:
+    play_complete = 0.0
+    progress_delta = 0.0
+    if isinstance(action, PlayProperty):
+        color = action.color
+        need = SET_SIZE_BY_COLOR[color]
+        cur = len(observation.properties.get(color, ()))
+        if cur + 1 >= need:
+            play_complete = 1.0
+        progress_delta = _scale(1, float(need))
+    rent_mag = 0.0
+    double_rent = 0.0
+    if isinstance(action, PlayRent) and action.color is not None:
+        color = action.color
+        nprops = len(observation.properties.get(color, ()))
+        rent_mag = _scale(_rent_from_property_count(color, nprops), 20.0)
+        double_rent = 1.0 if action.double_rent_card_id is not None else 0.0
+    target_strength = 0.0
+    tid = _target_player_id(action)
+    if tid is not None and tid in observation.opponents:
+        o = observation.opponents[tid]
+        tot = sum(len(cards) for cards in o.properties.values())
+        target_strength = _scale(o.completed_sets, 5.0) + _scale(tot, 30.0)
+    pay_sum = 0.0
+    pay_ratio = 0.0
+    pay_prop = 0.0
+    pay_n = 0.0
+    if isinstance(action, PayWithAssets):
+        pay_sum = _scale(
+            sum(_asset_value_for_payment(observation, cid) for cid in action.card_ids),
+            50.0,
+        )
+        pend = observation.pending
+        if pend is not None and pend.amount > 0:
+            tot = float(
+                sum(_asset_value_for_payment(observation, cid) for cid in action.card_ids)
+            )
+            pay_ratio = _scale(tot, float(pend.amount))
+        pay_prop = (
+            1.0
+            if any(
+                _card_in_zone(observation, cid) == "property" for cid in action.card_ids
+            )
+            else 0.0
+        )
+        pay_n = _scale(len(action.card_ids), 10.0)
+    is_attack = 0.0
+    is_building = 0.0
+    if isinstance(action, PlayActionCard):
+        card = _visible_card_by_id(observation, action.card_id)
+        if card is not None and card.action_subtype is not None:
+            st = card.action_subtype
+            if st in (ActionSubtype.DEAL_BREAKER, ActionSubtype.SLY_DEAL, ActionSubtype.FORCED_DEAL):
+                is_attack = 1.0
+            if st in (ActionSubtype.HOUSE, ActionSubtype.HOTEL):
+                is_building = 1.0
+    jsn_block = 0.0
+    if isinstance(action, RespondJustSayNo) and not action.accept:
+        pend = observation.pending
+        if pend is not None and (pend.amount >= 5 or pend.kind == "deal_breaker"):
+            jsn_block = 1.0
+    bank_v = 0.0
+    if isinstance(action, BankCard):
+        c = _visible_card_by_id(observation, action.card_id)
+        if c is not None:
+            bank_v = _scale(c.value, 10.0)
+    return (
+        play_complete,
+        progress_delta,
+        rent_mag,
+        double_rent,
+        target_strength,
+        pay_sum,
+        pay_ratio,
+        pay_prop,
+        pay_n,
+        is_attack,
+        is_building,
+        jsn_block,
+        bank_v,
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
+def _card_in_zone(observation: Observation, card_id: str) -> str:
+    for card in observation.hand:
+        if card.id == card_id:
+            return "hand"
+    for card in observation.bank:
+        if card.id == card_id:
+            return "bank"
+    for cards in observation.properties.values():
+        for card in cards:
+            if card.id == card_id:
+                return "property"
+    for opp in observation.opponents.values():
+        for cards in opp.properties.values():
+            for card in cards:
+                if card.id == card_id:
+                    return "property"
+    return "unknown"
+
+
+def _asset_value_for_payment(observation: Observation, card_id: str) -> int:
+    for card in observation.hand:
+        if card.id == card_id:
+            return card.value
+    for card in observation.bank:
+        if card.id == card_id:
+            return card.value
+    for cards in observation.properties.values():
+        for card in cards:
+            if card.id == card_id:
+                return card.value
+    for opp in observation.opponents.values():
+        for cards in opp.properties.values():
+            for card in cards:
+                if card.id == card_id:
+                    return card.value
+    return 0
+
+
+def _rent_from_property_count(color: PropertyColor, n_props: int) -> int:
+    ladder = RENT_LADDER_BY_COLOR.get(color)
+    if not ladder or n_props <= 0:
+        return 0
+    return ladder[min(n_props, len(ladder)) - 1]
 
 
 def _scale(value: int | float, denominator: float) -> float:

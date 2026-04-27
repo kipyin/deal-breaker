@@ -21,8 +21,10 @@ def save_checkpoint(
     model: PolicyValueNetwork,
     training_stats: dict[str, Any],
 ) -> None:
-    """Persist weights and training metadata. Checkpoints are suitable for continuation training
-    (load weights; Adam state is not stored, so each run starts a fresh optimizer).
+    """Persist weights and training metadata (includes ``schema_version`` and ``model_config`` dims).
+
+    Checkpoints are suitable for continuation training (load weights; Adam state is not stored,
+    so each run starts a fresh optimizer). Feature schema v2 is incompatible with v1 checkpoints.
     """
     torch = require_torch()
     path.parent.mkdir(parents=True, exist_ok=True)
