@@ -41,9 +41,15 @@ dbreaker --help
 
 ## Commands
 
+### Play
+
 ```bash
 # Play against AI opponents.
 uv run dbreaker play --players 3
+
+# Play a game against a trained AI.
+uv run dbreaker play --players 4 \
+  --ai-strategy neural:checkpoints/selfplay.pt
 
 # Run a scripted human turn stream.
 printf 'draw\nend\n' | uv run dbreaker play --commands - --output text
@@ -52,18 +58,26 @@ printf 'draw\nend\n' | uv run dbreaker play --commands - --output text
 uv run dbreaker tournament --players 4 --games 100 \
   --strategies random,basic,aggressive,defensive
 
+# Print a JSONL replay log.
+uv run dbreaker replay runs/latest/games/game-1.jsonl
+```
+
+### Train
+
+```bash
 # Measure simulator throughput (seat rotation matches tournament).
 uv run dbreaker benchmark --games 500 --output text
 uv run dbreaker benchmark --games 500 --output json
 
 # Train a neural checkpoint (requires ML extra).
-uv run dbreaker train --games 20 --checkpoint-out checkpoints/selfplay.pt
+uv run dbreaker train --players 4 --games 20 \
+  --checkpoint-out checkpoints/selfplay.pt
+
+# Or train one checkpoint per player count.
+uv run dbreaker rl-search --players 2,3,4,5 --games-per-run 10
 
 # Evaluate a candidate vs a baseline (e.g. neural checkpoint vs basic).
 uv run dbreaker evaluate --candidate neural:checkpoints/selfplay.pt --baseline basic
-
-# Print a JSONL replay log.
-uv run dbreaker replay runs/latest/games/game-1.jsonl
 ```
 
 ### Strategy specs
