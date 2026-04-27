@@ -27,6 +27,7 @@ def run_tournament(
     seed: int = 1,
     max_turns: int = 200,
     max_self_play_steps: int = 30_000,
+    stalemate_turns: int | None = 25,
     on_game: Callable[[GameProgress], None] | None = None,
 ) -> TournamentReport:
     registry = default_registry()
@@ -38,6 +39,7 @@ def run_tournament(
     ratings = {strategy.name: 1000.0 for strategy in strategies}
     games_with_winner = 0
     games_max_turn = 0
+    games_stalemate = 0
     games_aborted = 0
     for index in range(games):
         rotated = [strategies[(index + offset) % len(strategies)] for offset in range(player_count)]
@@ -48,6 +50,7 @@ def run_tournament(
             seed=seed + index,
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,
+            stalemate_turns=stalemate_turns,
         )
         if on_game is not None:
             on_game(
@@ -64,6 +67,8 @@ def run_tournament(
             ratings = update_multiplayer_elo(ratings, result.rankings)
         elif result.ended_by == "max_turns":
             games_max_turn += 1
+        elif result.ended_by == "stalemate":
+            games_stalemate += 1
         else:
             games_aborted += 1
 
@@ -73,6 +78,7 @@ def run_tournament(
         matrix=win_matrix(results),
         games_with_winner=games_with_winner,
         games_max_turn=games_max_turn,
+        games_stalemate=games_stalemate,
         games_aborted=games_aborted,
         max_turns_cap=max_turns,
     )

@@ -29,7 +29,7 @@ def test_run_tournament_on_game_callback_and_seeds() -> None:
     for g in seen:
         assert len(g.result.rankings) == 2
         assert g.result.turns >= 1
-        assert g.result.ended_by in ("winner", "max_turns", "aborted")
+        assert g.result.ended_by in ("winner", "max_turns", "stalemate", "aborted")
 
 
 def test_run_tournament_max_turns_and_outcome_counts() -> None:
@@ -42,5 +42,11 @@ def test_run_tournament_max_turns_and_outcome_counts() -> None:
         max_self_play_steps=5_000,
     )
     assert report.max_turns_cap == 3
-    assert report.games_with_winner + report.games_max_turn + report.games_aborted == 3
+    assert (
+        report.games_with_winner
+        + report.games_max_turn
+        + report.games_stalemate
+        + report.games_aborted
+        == 3
+    )
     assert "Outcomes:" in report.to_markdown()
