@@ -5,6 +5,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from dbreaker.experiments.runner import GameResult, run_self_play_game
+from dbreaker.ml.trainer import PPOConfig, SelfPlayPhaseTimings, train_self_play
 from dbreaker.strategies.registry import create_strategy
 
 
@@ -151,4 +152,124 @@ def run_benchmark(
         max_turns=max_turns,
         max_self_play_steps=max_self_play_steps,
         stalemate_turns=stalemate_turns,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NeuralTrainingBenchmarkReport:
+    """Throughput and phase timings for one :func:`train_self_play` call."""
+
+    games: int
+    player_count: int
+    training_steps: int
+    elapsed_seconds: float
+    rollout_seconds: float
+    ppo_update_seconds: float
+    training_steps_per_sec: float
+    games_per_sec: float
+    mean_reward: float
+    mean_entropy: float | None
+    mean_legal_actions_per_step: float
+    max_turns: int
+    max_self_play_steps: int
+    update_epochs: int
+    learning_rate: float
+    gamma: float
+    seed: int | None
+    torch_seed: int | None
+
+    def to_text_lines(self) -> list[str]:
+        ent = "null" if self.mean_entropy is None else f"{self.mean_entropy:.6f}"
+        return [
+            f"games={self.games}",
+            f"player_count={self.player_count}",
+            f"training_steps={self.training_steps}",
+            f"elapsed_seconds={self.elapsed_seconds:.6f}",
+            f"rollout_seconds={self.rollout_seconds:.6f}",
+            f"ppo_update_seconds={self.ppo_update_seconds:.6f}",
+            f"training_steps_per_sec={self.training_steps_per_sec:.6f}",
+            f"games_per_sec={self.games_per_sec:.6f}",
+            f"mean_reward={self.mean_reward:.6f}",
+            f"mean_entropy={ent}",
+            f"mean_legal_actions_per_step={self.mean_legal_actions_per_step:.6f}",
+            f"max_turns={self.max_turns}",
+            f"max_self_play_steps={self.max_self_play_steps}",
+            f"update_epochs={self.update_epochs}",
+            f"learning_rate={self.learning_rate}",
+            f"gamma={self.gamma}",
+            f"seed={self.seed}",
+            f"torch_seed={self.torch_seed}",
+        ]
+
+    def to_json(self) -> str:
+        payload = asdict(self)
+        return json.dumps(payload, sort_keys=True)
+
+
+def run_neural_training_benchmark(
+    *,
+    games: int,
+    player_count: int = 4,
+    seed: int | None = 1,
+    max_turns: int = 200,
+    max_self_play_steps: int = 30_000,
+    learning_rate: float = 3e-4,
+    clip_epsilon: float = 0.2,
+    value_coef: float = 0.5,
+    entropy_coef: float = 0.01,
+    update_epochs: int = 2,
+    gamma: float = 0.99,
+    opponent_mix_prob: float = 0.0,
+    torch_seed: int | None = None,
+) -> NeuralTrainingBenchmarkReport:
+    """Run a single PPO self-play training pass and report wall time and throughput.
+
+    Deterministic when ``seed`` is fixed (game *i* uses ``seed + i``).
+    Requires the ``ml`` extra (PyTorch).
+    """
+    if games < 0:
+        raise ValueError("games must be non-negative")
+    if player_count < 2:
+        raise ValueError("player_count must be at least 2")
+    config = PPOConfig(
+        games=games,
+        player_count=player_count,
+        max_turns=max_turns,
+        max_self_play_steps=max_self_play_steps,
+        learning_rate=learning_rate,
+        clip_epsilon=clip_epsilon,
+        value_coef=value_coef,
+        entropy_coef=entropy_coef,
+        update_epochs=update_epochs,
+        gamma=gamma,
+        opponent_mix_prob=opponent_mix_prob,
+    )
+    timings = SelfPlayPhaseTimings()
+    stats = train_self_play(
+        config, seed=seed, phase_timings=timings, torch_seed=torch_seed
+    )
+    elapsed = timings.total_seconds
+    safe_elapsed = elapsed if elapsed > 0.0 else 0.0
+    steps = stats.steps
+    training_steps_per_sec = (steps / safe_elapsed) if safe_elapsed > 0.0 else 0.0
+    games_per_sec = (games / safe_elapsed) if safe_elapsed > 0.0 else 0.0
+    return NeuralTrainingBenchmarkReport(
+        games=games,
+        player_count=player_count,
+        training_steps=steps,
+        elapsed_seconds=elapsed,
+        rollout_seconds=timings.rollout_seconds,
+        ppo_update_seconds=timings.ppo_update_seconds,
+        training_steps_per_sec=training_steps_per_sec,
+        games_per_sec=games_per_sec,
+        mean_reward=stats.mean_reward,
+        mean_entropy=stats.mean_entropy,
+        mean_legal_actions_per_step=timings.mean_legal_actions_per_step,
+        max_turns=max_turns,
+        max_self_play_steps=max_self_play_steps,
+        update_epochs=update_epochs,
+        learning_rate=learning_rate,
+        gamma=gamma,
+        seed=seed,
+        torch_seed=torch_seed,
     )

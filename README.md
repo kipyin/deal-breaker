@@ -97,6 +97,10 @@ uv run dbreaker replay runs/latest/games/game-1.jsonl
 uv run dbreaker benchmark --games 500 --output text
 uv run dbreaker benchmark --games 500 --output json
 
+# Neural PPO self-play throughput (rollout vs PPO phase timings; requires ML extra).
+# Use --torch-seed for reproducible step counts when comparing optimizations.
+uv run dbreaker benchmark-neural --games 3 --players 4 --torch-seed 0 --output text
+
 # Train a neural checkpoint (requires ML extra).
 uv run dbreaker train --players 4 --games 20 \
   --checkpoint-out checkpoints/selfplay.pt

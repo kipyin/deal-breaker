@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 import typer
 
 from dbreaker.cli.play import run_interactive_play, run_scripted_play
-from dbreaker.experiments.benchmark import run_benchmark
+from dbreaker.experiments.benchmark import run_benchmark, run_neural_training_benchmark
 from dbreaker.experiments.rl_search import (
     EvaluationConfig,
     RLSearchConfig,
@@ -497,6 +497,61 @@ def benchmark(
         max_self_play_steps=max_self_play_steps,
         stalemate_turns=stalemate_turns,
     )
+    if out == "json":
+        typer.echo(report.to_json())
+    else:
+        for line in report.to_text_lines():
+            typer.echo(line)
+
+
+@app.command("benchmark-neural")
+def benchmark_neural(
+    games: int = typer.Option(2, min=0, help="Number of self-play games per training pass."),
+    players: int = typer.Option(4, "--players", min=2, max=5, help="Players per table."),
+    seed: int = typer.Option(1, help="Base seed; game n uses seed + n − 1."),
+    max_turns: int = typer.Option(200, "--max-turns", min=1),
+    max_self_play_steps: int = typer.Option(
+        30_000,
+        "--max-self-play-steps",
+        min=1,
+    ),
+    update_epochs: int = typer.Option(2, "--update-epochs", min=1),
+    learning_rate: float = typer.Option(3e-4, "--learning-rate"),
+    gamma: float = typer.Option(0.99, "--gamma"),
+    torch_seed: int | None = typer.Option(
+        None,
+        "--torch-seed",
+        help="If set, torch.manual_seed before training (reproducible benchmarks).",
+    ),
+    output: str = typer.Option(
+        "text",
+        "--output",
+        help="'text' for one key=value per line, 'json' for a single JSON object.",
+    ),
+) -> None:
+    """Measure neural PPO self-play training throughput (steps/sec) and phase timings."""
+    try:
+        report = run_neural_training_benchmark(
+            games=games,
+            player_count=players,
+            seed=seed,
+            max_turns=max_turns,
+            max_self_play_steps=max_self_play_steps,
+            update_epochs=update_epochs,
+            learning_rate=learning_rate,
+            gamma=gamma,
+            torch_seed=torch_seed,
+        )
+    except ImportError as exc:
+        typer.secho(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    out = output.lower().strip()
+    if out not in {"text", "json"}:
+        typer.secho(
+            f"Error: --output must be 'text' or 'json', got {output!r}.",
+            err=True,
+        )
+        raise typer.Exit(2)
     if out == "json":
         typer.echo(report.to_json())
     else:
