@@ -5,7 +5,7 @@ type Props = {
   label?: string;
 };
 
-/** 16:9 arcade table chrome: pixel border, purple felt, CRT overlay, vignette. */
+/** Arcade table chrome: felt, scanlines, vignette; layout is responsive (not fixed 16:9). */
 export function TableFrame({ children, label = "Prototype play table" }: Props) {
   return (
     <section className="play-table" aria-label={label}>

@@ -90,7 +90,9 @@ export function isEndTurnAction(action: LegalAction): boolean {
 export function isHumanTurn(state: InspectorState | null): boolean {
   const viewerId = state?.viewer?.player_id;
   if (!viewerId) return false;
-  return state?.active_player_id === viewerId || state?.current_player_id === viewerId;
+  // The seat that may act is `active_player_id` (payer, responder, or current turn).
+  // `current_player_id` can differ during payment/response; do not treat it alone as permission.
+  return state?.active_player_id === viewerId;
 }
 
 export function handCardIdSet(hand: InspectorCard[] | undefined): Set<string> {

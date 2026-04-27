@@ -1,10 +1,12 @@
 import type {
+  InspectorCard,
   InspectorLastAction,
   InspectorPending,
   InspectorState,
   JsonObject,
   LegalAction,
 } from "../../api/types";
+import { CardActionPanel } from "./CardActionPanel";
 import {
   actionType,
   formatMoney,
@@ -64,8 +66,11 @@ type Props = {
   onRunAi: () => void;
   readOnly?: boolean;
   flashMessage?: string | null;
-  /** Shown when card plays are routed through the hand popover. */
+  /** Shown when card plays are waiting for a hand-card selection. */
   handActionsHint?: string | null;
+  selectedCard?: InspectorCard | null;
+  actionsForSelectedCard?: LegalAction[];
+  onClearSelectedCard?: () => void;
 };
 
 export function ActionZone({
@@ -76,6 +81,9 @@ export function ActionZone({
   readOnly,
   flashMessage,
   handActionsHint,
+  selectedCard,
+  actionsForSelectedCard = [],
+  onClearSelectedCard,
 }: Props) {
   const endTurn = legalActions.find(isEndTurnAction);
   const cardActions = legalActions.filter((action) => action !== endTurn);
@@ -117,6 +125,15 @@ export function ActionZone({
           {playerCanAct ? "No card actions available." : "AI is resolving the table."}
         </p>
       )}
+      {selectedCard && onClearSelectedCard ? (
+        <CardActionPanel
+          card={selectedCard}
+          actions={actionsForSelectedCard}
+          onChoose={onChoose}
+          onDismiss={onClearSelectedCard}
+          disabled={readOnly || !playerCanAct}
+        />
+      ) : null}
       <div className="action-zone__primary">
         {playerCanAct ? (
           <button

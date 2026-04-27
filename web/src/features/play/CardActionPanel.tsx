@@ -29,7 +29,8 @@ function choiceHint(payload: JsonObject): string {
   }
 }
 
-export function CardActionPopover({
+/** Inline card actions below the hand (not a floating popover). */
+export function CardActionPanel({
   card,
   actions,
   onChoose,
@@ -39,17 +40,16 @@ export function CardActionPopover({
   const label = cardLabel(card);
 
   return (
-    <div
-      className="card-action-popover"
-      role="dialog"
+    <section
+      className="card-action-panel"
+      role="region"
       aria-label={`Actions for ${label}`}
-      data-placement="hand"
     >
-      <div className="card-action-popover__header">
-        <span className="card-action-popover__title">{label}</span>
+      <div className="card-action-panel__header">
+        <span className="card-action-panel__title">{label}</span>
         <button
           type="button"
-          className="card-action-popover__close"
+          className="card-action-panel__close"
           onClick={onDismiss}
           aria-label="Cancel card selection"
         >
@@ -57,24 +57,22 @@ export function CardActionPopover({
         </button>
       </div>
       {actions.length === 0 ? (
-        <p className="card-action-popover__empty">
-          No legal plays for this card right now.
-        </p>
+        <p className="card-action-panel__empty">No legal plays for this card right now.</p>
       ) : (
-        <ul className="card-action-popover__list">
+        <ul className="card-action-panel__list">
           {actions.map((action) => (
             <li key={action.id}>
               <button
                 type="button"
-                className="card-action-popover__btn"
+                className="card-action-panel__btn"
                 disabled={disabled}
                 onClick={() => {
                   onChoose(action.payload);
                   onDismiss();
                 }}
               >
-                <span className="card-action-popover__hint">{choiceHint(action.payload)}</span>
-                <span className="card-action-popover__label">{action.label}</span>
+                <span className="card-action-panel__hint">{choiceHint(action.payload)}</span>
+                <span className="card-action-panel__label">{action.label}</span>
               </button>
             </li>
           ))}
@@ -82,11 +80,14 @@ export function CardActionPopover({
       )}
       <button
         type="button"
-        className="card-action-popover__cancel pixel-button pixel-button--secondary"
+        className="card-action-panel__cancel pixel-button pixel-button--secondary"
         onClick={onDismiss}
       >
         Cancel
       </button>
-    </div>
+    </section>
   );
 }
+
+/** @deprecated Use {@link CardActionPanel}. */
+export const CardActionPopover = CardActionPanel;

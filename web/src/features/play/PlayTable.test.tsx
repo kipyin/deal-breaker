@@ -254,8 +254,120 @@ const densePlayUiStressState: InspectorState = {
   },
 };
 
+const fivePlayerState: InspectorState = {
+  ...playableState,
+  version: 99,
+  opponents: [
+    {
+      id: "P2",
+      name: "Rival Two",
+      hand_size: 3,
+      bank_value: 1,
+      completed_sets: 0,
+      properties: {
+        red: [{ id: "r1", name: "R1", kind: "property", value: 1, color: "red" }],
+      },
+    },
+    {
+      id: "P3",
+      name: "Rival Three",
+      hand_size: 4,
+      bank_value: 2,
+      completed_sets: 0,
+      properties: {},
+    },
+    {
+      id: "P4",
+      name: "Rival Four",
+      hand_size: 2,
+      bank_value: 0,
+      completed_sets: 0,
+      properties: {},
+    },
+    {
+      id: "P5",
+      name: "Rival Five",
+      hand_size: 5,
+      bank_value: 3,
+      completed_sets: 1,
+      properties: {},
+    },
+  ],
+};
+
+/** P1 is still the turn clock "current" player, but P2 is the active responder. Human P1 must wait. */
+const viewerP1CurrentButP2Responds: InspectorState = {
+  game_id: "game_respond_p2",
+  version: 5,
+  status: "active",
+  turn: 4,
+  phase: "respond",
+  current_player_id: "P1",
+  active_player_id: "P2",
+  winner_id: null,
+  deck_count: 20,
+  discard_count: 2,
+  discard_top: { id: "d1", name: "Discard", kind: "money", value: 1 },
+  viewer: {
+    player_id: "P1",
+    actions_taken: 0,
+    actions_left: 2,
+    discard_required: 0,
+    hand: [],
+    bank: [],
+    properties: {},
+  },
+  opponents: [
+    {
+      id: "P2",
+      name: "AI Broker",
+      hand_size: 2,
+      bank_value: 0,
+      completed_sets: 0,
+      properties: {},
+    },
+  ],
+  pending: {
+    kind: "payment",
+    actor_id: "P1",
+    target_id: "P2",
+    respond_player_id: "P2",
+    amount: 3,
+    source_card_name: "Rent",
+    reason: "P2 may respond with Just Say No",
+    negated: false,
+  },
+  legal_actions: [],
+  last_action: {
+    player_id: "P1",
+    payload: { type: "PlayRent" },
+  },
+  timeline: [],
+};
+
 describe("PlayTable", () => {
-  test("renders prototype table landmarks, pile mapping, and primary actions", () => {
+  test("shows AI turn and disables actions when viewer is not the active player", () => {
+    const onChoose = vi.fn();
+    const onRunAi = vi.fn();
+    render(
+      <PlayTable
+        state={viewerP1CurrentButP2Responds}
+        onChoose={onChoose}
+        onRunAi={onRunAi}
+      />
+    );
+
+    const table = screen.getByRole("region", { name: "Prototype play table" });
+    expect(within(table).getByText("AI TURN")).toBeInTheDocument();
+    const zone = within(table).getByLabelText("Action zone");
+    expect(within(zone).getByText("AI is resolving the table.")).toBeInTheDocument();
+
+    fireEvent.click(within(zone).getByRole("button", { name: /RUN AI UNTIL YOUR TURN/i }));
+    expect(onRunAi).toHaveBeenCalled();
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+
+  test("renders command-center landmarks, pile mapping, and primary actions", () => {
     const onChoose = vi.fn();
     render(
       <PlayTable
@@ -268,9 +380,13 @@ describe("PlayTable", () => {
     const table = screen.getByRole("region", { name: "Prototype play table" });
     expect(table.querySelector(".play-table__inner--prototype")).toBeInTheDocument();
     expect(within(table).getByLabelText("Opponent seats")).toBeInTheDocument();
-    expect(within(table).getByLabelText("Your bank")).toHaveTextContent("YOUR BANK");
-    expect(within(table).getByLabelText("Your properties")).toHaveTextContent("YOUR PROPERTIES");
-    expect(within(table).getByLabelText("Your hand")).toHaveTextContent("YOUR HAND (3)");
+    const tableState = within(table).getByRole("region", { name: "Table state" });
+    const commandRail = within(table).getByRole("region", { name: "Command rail" });
+    const handDock = within(table).getByRole("region", { name: "Hand dock" });
+    expect(within(tableState).getByLabelText("Your bank")).toHaveTextContent("YOUR BANK");
+    expect(within(tableState).getByLabelText("Your properties")).toHaveTextContent("YOUR PROPERTIES");
+    expect(within(handDock).getByText("YOUR HAND (3)")).toBeInTheDocument();
+    expect(within(handDock).getByLabelText("Your hand")).toHaveAttribute("data-hand-count", "3");
     expect(within(table).getByText("PIXEL PROPERTY DEAL")).toBeInTheDocument();
     expect(within(table).getByText("YOUR TURN")).toBeInTheDocument();
     expect(within(table).getByText("TURN 7")).toBeInTheDocument();
@@ -280,7 +396,7 @@ describe("PlayTable", () => {
 
     expect(within(table).getByText("99")).toBeInTheDocument();
     expect(within(table).getByText("Top Discard")).toBeInTheDocument();
-    const piles = within(table).getByLabelText("Draw and discard piles");
+    const piles = within(tableState).getByLabelText("Draw and discard piles");
     expect(within(piles).getByText("DRAW PILE")).toBeInTheDocument();
     expect(within(piles).getByText("DISCARD")).toBeInTheDocument();
 
@@ -294,7 +410,7 @@ describe("PlayTable", () => {
     fireEvent.click(within(table).getByRole("button", { name: "Draw +2 cards" }));
     expect(onChoose).toHaveBeenCalledWith({ type: "DrawCards" });
 
-    const primarySlot = within(table).getByLabelText("Action zone").querySelector(".action-zone__primary");
+    const primarySlot = within(commandRail).getByLabelText("Action zone").querySelector(".action-zone__primary");
     expect(primarySlot).not.toBeNull();
     expect(primarySlot?.contains(within(table).getByRole("button", { name: "END TURN" }))).toBe(true);
 
@@ -303,7 +419,31 @@ describe("PlayTable", () => {
     expect(onChoose).toHaveBeenCalledWith({ type: "EndTurn" });
   });
 
-  test("routes hand card popover choices through matching legal actions", () => {
+  test("keeps selected-card actions in the command rail, separate from the hand dock", () => {
+    render(
+      <PlayTable
+        state={playableState}
+        onChoose={() => undefined}
+        onRunAi={() => undefined}
+      />
+    );
+
+    const table = screen.getByRole("region", { name: "Prototype play table" });
+    const commandRail = within(table).getByRole("region", { name: "Command rail" });
+    const handDock = within(table).getByRole("region", { name: "Hand dock" });
+
+    fireEvent.click(within(handDock).getByRole("button", { name: /Deal Breaker/i }));
+    const panel = within(commandRail).getByRole("region", {
+      name: /Actions for Deal Breaker/i,
+    });
+
+    expect(handDock.contains(panel)).toBe(false);
+    expect(within(commandRail).getByText("P2 charged rent")).toBeInTheDocument();
+    expect(within(commandRail).getByText("P2 played rent")).toBeInTheDocument();
+    expect(within(commandRail).getByRole("button", { name: "END TURN" })).toBeInTheDocument();
+  });
+
+  test("routes hand card action panel choices through matching legal actions", () => {
     const onChoose = vi.fn();
     render(
       <PlayTable
@@ -332,6 +472,27 @@ describe("PlayTable", () => {
     });
   });
 
+  test("renders card action panel outside the hand scroll strip", () => {
+    render(
+      <PlayTable
+        state={playableState}
+        onChoose={() => undefined}
+        onRunAi={() => undefined}
+      />
+    );
+
+    const table = screen.getByRole("region", { name: "Prototype play table" });
+    const handStrip = within(table).getByLabelText("Your hand");
+
+    fireEvent.click(within(table).getByRole("button", { name: /Deal Breaker/i }));
+    const panel = within(table).getByRole("region", {
+      name: /Actions for Deal Breaker/i,
+    });
+
+    expect(handStrip.contains(panel)).toBe(false);
+    expect(panel.closest(".play-command-rail")).not.toBeNull();
+  });
+
   test("omitted pile metadata shows honest placeholders, not fake counts", () => {
     const minimal: InspectorState = {
       ...playableState,
@@ -343,6 +504,31 @@ describe("PlayTable", () => {
     const table = screen.getByRole("region", { name: "Prototype play table" });
     const piles = within(table).getByLabelText("Draw and discard piles");
     expect(within(piles).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("hand with more than four cards sets dense layout data attribute", () => {
+    const fiveCardHand: InspectorState = {
+      ...playableState,
+      viewer: {
+        ...playableState.viewer!,
+        hand: [
+          ...playableState.viewer!.hand,
+          { id: "c4", name: "Card Four", kind: "money", value: 1 },
+          { id: "c5", name: "Card Five", kind: "money", value: 1 },
+        ],
+      },
+    };
+    render(<PlayTable state={fiveCardHand} onChoose={() => undefined} onRunAi={() => undefined} />);
+    const handRegion = screen.getByLabelText("Your hand");
+    expect(handRegion).toHaveAttribute("data-hand-count", "5");
+    expect(handRegion).toHaveAttribute("data-hand-dense", "true");
+  });
+
+  test("hand with four or fewer cards omits dense layout flag", () => {
+    render(<PlayTable state={playableState} onChoose={() => undefined} onRunAi={() => undefined} />);
+    const handRegion = screen.getByLabelText("Your hand");
+    expect(handRegion).toHaveAttribute("data-hand-count", "3");
+    expect(handRegion).not.toHaveAttribute("data-hand-dense");
   });
 
   test("dense stress state keeps long card text and selected-card actions discoverable", () => {
@@ -371,11 +557,10 @@ describe("PlayTable", () => {
     expect(longCard).toHaveAttribute("title", "International Ultra Mega Deal Breaker Deluxe Edition");
 
     fireEvent.click(longCard);
-    const popover = within(table).getByRole("dialog", {
+    const panel = within(table).getByRole("region", {
       name: /Actions for International Ultra Mega Deal Breaker Deluxe Edition/i,
     });
-    expect(within(popover).getByText("Use International Ultra Mega Deal Breaker Deluxe Edition")).toBeInTheDocument();
-    expect(popover).toHaveAttribute("data-placement", "hand");
+    expect(within(panel).getByText("Use International Ultra Mega Deal Breaker Deluxe Edition")).toBeInTheDocument();
 
     const propertyCards = within(table).getByLabelText("Your properties").querySelectorAll(".play-card--compact");
     expect(propertyCards.length).toBeGreaterThanOrEqual(6);
@@ -383,5 +568,15 @@ describe("PlayTable", () => {
       expect(card).toHaveAttribute("title");
       expect(card.querySelector(".play-card__name")).not.toBeNull();
     }
+  });
+
+  test("renders four opponent seats and core table zones for a 5-player game", () => {
+    render(<PlayTable state={fivePlayerState} onChoose={() => undefined} onRunAi={() => undefined} />);
+    const table = screen.getByRole("region", { name: "Prototype play table" });
+    expect(table.querySelectorAll(".opponent-seat").length).toBe(4);
+    expect(within(table).getByText("Rival Two")).toBeInTheDocument();
+    expect(within(table).getByText("Rival Five")).toBeInTheDocument();
+    expect(within(table).getByLabelText("Action zone")).toBeInTheDocument();
+    expect(within(table).getByLabelText("Draw and discard piles")).toBeInTheDocument();
   });
 });

@@ -3,7 +3,7 @@ import type { InspectorState, JsonObject, LegalAction } from "../../api/types";
 import { ActionZone } from "./ActionZone";
 import { OpponentSeat } from "./OpponentSeat";
 import { PileZone } from "./PileZone";
-import { PlayerArea } from "./PlayerArea";
+import { PlayerHandDock, PlayerTableState } from "./PlayerArea";
 import { TableFrame } from "./TableFrame";
 import {
   actionType,
@@ -102,63 +102,76 @@ export function PlayTable({
   const humanTurn = isHumanTurn(state);
   const turn = state.turn == null ? "TURN --" : `TURN ${state.turn}`;
   const actionsLeft = `${viewer.actions_left} ACTION${viewer.actions_left === 1 ? "" : "S"} LEFT`;
+  const selectedCard = selectedCardId
+    ? viewer.hand.find((card) => card.id === selectedCardId) ?? null
+    : null;
 
   return (
     <TableFrame>
       <div className="play-table__inner play-table__inner--prototype" data-table>
-        <div className="play-logo" aria-label="Game logo">
-          <span className="play-logo__full">PIXEL PROPERTY DEAL</span>
-          <span>PIXEL</span>
-          <strong>PROPERTY DEAL</strong>
-        </div>
+        <header className="play-surface__hud">
+          <div className="play-logo" aria-label="Game logo">
+            <span className="play-logo__full">PIXEL PROPERTY DEAL</span>
+            <span>PIXEL</span>
+            <strong>PROPERTY DEAL</strong>
+          </div>
 
-        <div className={`play-turn-banner${humanTurn ? " play-turn-banner--you" : ""}`} role="status">
-          <span>{humanTurn ? "YOUR TURN" : "AI TURN"}</span>
-          <small>
-            <span>{turn}</span>
-            <span>{actionsLeft}</span>
-          </small>
-        </div>
+          <div className={`play-turn-banner${humanTurn ? " play-turn-banner--you" : ""}`} role="status">
+            <span>{humanTurn ? "YOUR TURN" : "AI TURN"}</span>
+            <small>
+              <span>{turn}</span>
+              <span>{actionsLeft}</span>
+            </small>
+          </div>
+        </header>
 
-        <section className="play-opponents" aria-label="Opponent seats">
-          {opponents.length > 0 ? (
-            opponents.map((opponent, index) => (
-              <OpponentSeat
-                key={opponent.id}
-                opponent={opponent}
-                activePlayerId={state.active_player_id}
-                seatIndex={index}
+        <div className="play-command-center">
+          <section className="play-table-state" aria-label="Table state">
+            <section className="play-opponents" aria-label="Opponent seats">
+              {opponents.length > 0 ? (
+                opponents.map((opponent, index) => (
+                  <OpponentSeat
+                    key={opponent.id}
+                    opponent={opponent}
+                    activePlayerId={state.active_player_id}
+                    seatIndex={index}
+                  />
+                ))
+              ) : (
+                <EmptySlot label="No opponents in snapshot" />
+              )}
+            </section>
+
+            <div className="play-center-row">
+              <PileZone
+                state={state}
+                onDraw={drawPileAction}
+                drawEnabled={drawEnabled}
               />
-            ))
-          ) : (
-            <EmptySlot label="No opponents in snapshot" />
-          )}
-        </section>
+              <PlayerTableState viewer={viewer} />
+            </div>
+          </section>
 
-        <div className="play-center-row">
-          <PileZone
-            state={state}
-            onDraw={drawPileAction}
-            drawEnabled={drawEnabled}
-          />
-          <ActionZone
-            state={state}
-            legalActions={zoneActions}
-            onChoose={onChoose}
-            onRunAi={onRunAi}
-            readOnly={readOnly}
-            flashMessage={flashMessage}
-            handActionsHint={handActionsHint}
-          />
+          <section className="play-command-rail" aria-label="Command rail">
+            <ActionZone
+              state={state}
+              legalActions={zoneActions}
+              onChoose={onChoose}
+              onRunAi={onRunAi}
+              readOnly={readOnly}
+              flashMessage={flashMessage}
+              handActionsHint={selectedCard ? null : handActionsHint}
+              selectedCard={readOnly ? null : selectedCard}
+              actionsForSelectedCard={readOnly ? [] : actionsForSelected}
+              onClearSelectedCard={readOnly ? undefined : () => setSelectedCardId(null)}
+            />
+          </section>
         </div>
 
-        <PlayerArea
+        <PlayerHandDock
           viewer={viewer}
           selectedCardId={readOnly ? null : selectedCardId}
           onSelectHandCard={readOnly ? undefined : (id) => setSelectedCardId(id)}
-          actionsForSelectedCard={readOnly ? [] : actionsForSelected}
-          onChooseCardAction={readOnly ? undefined : (p) => onChoose(p)}
-          cardActionDisabled={readOnly || !playerCanAct}
         />
       </div>
     </TableFrame>
