@@ -7,7 +7,7 @@ def win_matrix(results: list[GameResult]) -> dict[str, dict[str, float]]:
     wins: dict[str, dict[str, int]] = {}
     games: dict[str, dict[str, int]] = {}
     for result in results:
-        if not result.rankings:
+        if result.ended_by != "winner" or not result.rankings:
             continue
         winner = result.rankings[0]
         for strategy in result.rankings:

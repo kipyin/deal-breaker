@@ -26,7 +26,7 @@ def summarize_results(results: list[GameResult]) -> dict[str, StrategySummary]:
         for rank, strategy in enumerate(result.rankings, start=1):
             ranks.setdefault(strategy, []).append(rank)
             wins.setdefault(strategy, 0)
-            if rank == 1:
+            if rank == 1 and result.ended_by == "winner":
                 wins[strategy] += 1
 
     return {

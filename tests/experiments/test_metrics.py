@@ -15,3 +15,23 @@ def test_summarize_results_reports_win_rate_and_average_rank() -> None:
     assert summary["random"].games == 3
     assert summary["random"].win_rate == 2 / 3
     assert summary["basic"].average_rank == 5 / 3
+
+
+def test_summarize_wins_ignore_max_turn_placings() -> None:
+    results = [
+        GameResult(
+            game_id="g1",
+            rankings=["alpha", "beta"],
+            turns=99,
+            ended_by="max_turns",
+        ),
+        GameResult(
+            game_id="g2",
+            rankings=["beta", "alpha"],
+            turns=10,
+            ended_by="winner",
+        ),
+    ]
+    summary = summarize_results(results)
+    assert summary["alpha"].wins == 0
+    assert summary["beta"].wins == 1
