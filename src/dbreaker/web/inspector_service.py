@@ -33,6 +33,7 @@ def _opponent_row(o: OpponentObservation) -> dict[str, Any]:
         "id": o.id,
         "name": o.name,
         "hand_size": o.hand_size,
+        "bank": [card_to_json(card) for card in o.bank],
         "bank_value": o.bank_value,
         "properties": property_table_opp(o.properties),
         "completed_sets": o.completed_sets,

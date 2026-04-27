@@ -12,6 +12,7 @@ class OpponentObservation:
     id: str
     name: str
     hand_size: int
+    bank: tuple[Card, ...]
     bank_value: int
     properties: dict[PropertyColor, tuple[Card, ...]]
     completed_sets: int
@@ -59,6 +60,7 @@ def observation_for(state: GameState, player_id: str, *, omniscient: bool = Fals
             id=opponent.id,
             name=opponent.name,
             hand_size=len(opponent.hand),
+            bank=tuple(opponent.bank),
             bank_value=sum(card.value for card in opponent.bank),
             properties={color: tuple(cards) for color, cards in opponent.properties.items()},
             completed_sets=opponent.completed_set_count(),

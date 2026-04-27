@@ -7,6 +7,7 @@ from dbreaker.engine.game import Game
 from dbreaker.engine.rules import GamePhase
 from dbreaker.engine.state import PendingEffect
 from dbreaker.web.inspector_service import build_inspector_state
+from dbreaker.web.serialization import card_to_json
 
 
 def _action(card_id: str, subtype: ActionSubtype) -> Card:
@@ -50,3 +51,15 @@ def test_inspector_legal_actions_respond_phase_use_viewer_not_active_player() ->
         a["payload"].get("type") == "RespondJustSayNo"
         for a in p2_ins.get("legal_actions", [])
     )
+
+
+def test_inspector_state_serializes_public_opponent_bank_cards() -> None:
+    game = Game.new(player_count=2, seed=3)
+    bank_card = game.state.players["P2"].hand.pop()
+    game.state.players["P2"].bank.append(bank_card)
+
+    state = build_inspector_state(game, game_id="g1", viewer="P1")
+
+    opponent = state["opponents"][0]
+    assert opponent["bank_value"] == bank_card.value
+    assert opponent["bank"] == [card_to_json(bank_card)]

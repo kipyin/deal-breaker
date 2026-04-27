@@ -87,6 +87,7 @@ export interface InspectorOpponent {
   id: string;
   name: string;
   hand_size: number;
+  bank: InspectorCard[];
   bank_value: number;
   properties: Record<string, InspectorCard[]>;
   completed_sets: number;
