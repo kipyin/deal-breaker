@@ -9,10 +9,33 @@ import typer
 
 from dbreaker.cli.play import run_interactive_play, run_scripted_play
 from dbreaker.experiments.benchmark import run_benchmark
+from dbreaker.experiments.rl_search import (
+    EvaluationConfig,
+    RLSearchConfig,
+    evaluate_candidate,
+    promote_champion,
+    run_rl_search,
+)
 from dbreaker.experiments.tournament import GameProgress, run_tournament
 from dbreaker.replay.log_store import read_events
 
 app = typer.Typer(help="Monopoly Deal AI strategy research platform.")
+
+
+def _parse_comma_ints(spec: str) -> tuple[int, ...]:
+    return tuple(int(part.strip()) for part in spec.split(",") if part.strip())
+
+
+def _parse_comma_strs(spec: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in spec.split(",") if part.strip())
+
+
+def _promotion_checkpoint(candidate: str, override: str | None) -> str:
+    if override:
+        return override
+    if candidate.startswith("neural:"):
+        return candidate.removeprefix("neural:")
+    return candidate
 
 
 def _format_tournament_game_line(p: GameProgress, detail: bool) -> str:
@@ -188,6 +211,29 @@ def train(
     max_turns: int = typer.Option(200, "--max-turns", min=1),
     max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
     update_epochs: int = typer.Option(2, "--update-epochs", min=1),
+    gamma: float = typer.Option(
+        0.99,
+        "--gamma",
+        min=0.0,
+        max=1.0,
+        help="Discount on sparse terminal rewards for value targets.",
+    ),
+    opponent_mix: float = typer.Option(
+        0.0,
+        "--opponent-mix",
+        min=0.0,
+        max=1.0,
+        help="Probability per game of training against heuristics / champion instead of pure self-play.",
+    ),
+    opponents: str = typer.Option(
+        "basic,aggressive,defensive,set_completion",
+        "--opponents",
+        help="Comma-separated heuristic strategies sampled when opponent mixing is active.",
+    ),
+    champion: Annotated[
+        Path | None,
+        typer.Option("--champion", help="Optional checkpoint path added to the opponent pool when mixing."),
+    ] = None,
 ) -> None:
     """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
     try:
@@ -198,15 +244,153 @@ def train(
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,
             update_epochs=update_epochs,
+            gamma=gamma,
+            opponent_mix_prob=opponent_mix,
+            opponent_strategies=_parse_comma_strs(opponents),
+            champion_checkpoint=champion,
         )
         stats = trainer_module.train_self_play(config, checkpoint_out=checkpoint_out, seed=seed)
     except ImportError as exc:
         typer.secho(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
+    entropy = (
+        f" mean_entropy={stats.mean_entropy:.4f}"
+        if getattr(stats, "mean_entropy", None) is not None
+        else ""
+    )
     typer.echo(
         f"trained games={stats.games} steps={stats.steps} "
-        f"mean_reward={stats.mean_reward:.3f} checkpoint={checkpoint_out}"
+        f"mean_reward={stats.mean_reward:.3f}{entropy} checkpoint={checkpoint_out}"
     )
+
+
+@app.command("rl-search")
+def rl_search(
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output-dir", help="Directory for per-count runs and manifests."),
+    ] = Path("checkpoints/rl-search"),
+    players: str = typer.Option(
+        "2,3,4,5",
+        "--players",
+        help="Comma-separated player counts (2-5).",
+    ),
+    runs: int = typer.Option(1, "--runs", min=1, help="Training runs per player count."),
+    games_per_run: int = typer.Option(10, "--games-per-run", min=1),
+    seed: int = typer.Option(1, help="Base seed; per-run seeds are derived."),
+    max_turns: int = typer.Option(200, "--max-turns", min=1),
+    max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
+    update_epochs: int = typer.Option(2, "--update-epochs", min=1),
+    gamma: float = typer.Option(0.99, "--gamma", min=0.0, max=1.0),
+    opponent_mix: float = typer.Option(
+        0.0,
+        "--opponent-mix",
+        min=0.0,
+        max=1.0,
+    ),
+    opponents: str = typer.Option(
+        "basic,aggressive,defensive,set_completion",
+        "--opponents",
+    ),
+    champion: Annotated[
+        Path | None,
+        typer.Option("--champion", help="Optional champion checkpoint for opponent mixing."),
+    ] = None,
+) -> None:
+    """Train count-specific checkpoints under output_dir with manifests (RL search loop)."""
+    try:
+        import_module("dbreaker.ml.trainer")
+    except ImportError as exc:
+        typer.secho(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    manifests = run_rl_search(
+        RLSearchConfig(
+            output_dir=output_dir,
+            player_counts=_parse_comma_ints(players),
+            runs_per_count=runs,
+            games_per_run=games_per_run,
+            seed=seed,
+            max_turns=max_turns,
+            max_self_play_steps=max_self_play_steps,
+            update_epochs=update_epochs,
+            gamma=gamma,
+            opponent_mix_prob=opponent_mix,
+            opponent_strategies=_parse_comma_strs(opponents),
+            champion_checkpoint=champion,
+        )
+    )
+    for manifest in manifests:
+        typer.echo(
+            f"{manifest.player_count}p run {manifest.run_index}: "
+            f"checkpoint={manifest.checkpoint_path} manifest={manifest.manifest_path}"
+        )
+
+
+@app.command("rl-evaluate")
+def rl_evaluate(
+    candidate: str = typer.Option(
+        ...,
+        "--candidate",
+        help="Candidate strategy, e.g. neural:path.pt",
+    ),
+    players: int = typer.Option(4, "--players", min=2, max=5),
+    games: int = typer.Option(20, "--eval-games", min=1),
+    seed: int = typer.Option(1),
+    max_turns: int = typer.Option(200, "--max-turns", min=1),
+    max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
+    baselines: str = typer.Option(
+        "basic,aggressive,defensive,set_completion",
+        "--baselines",
+    ),
+    champions: Annotated[
+        Path | None,
+        typer.Option("--champions", help="champions.json for previous-best comparison."),
+    ] = None,
+    promote: bool = typer.Option(
+        False,
+        "--promote",
+        help="If set, update champions.json when promotion guardrails pass.",
+    ),
+    checkpoint_path: Annotated[
+        str | None,
+        typer.Option(
+            "--checkpoint-path",
+            help="Path written to champions.json when promoting (default: strip neural: prefix).",
+        ),
+    ] = None,
+    max_aborted_rate: float = typer.Option(
+        0.0,
+        "--max-aborted-rate",
+        min=0.0,
+        max=1.0,
+    ),
+) -> None:
+    """Evaluate a candidate vs baselines (and optional champion) using tournament reporting."""
+    result = evaluate_candidate(
+        EvaluationConfig(
+            player_count=players,
+            candidate=candidate,
+            baselines=_parse_comma_strs(baselines),
+            champions_path=champions,
+            games=games,
+            seed=seed,
+            max_turns=max_turns,
+            max_self_play_steps=max_self_play_steps,
+        )
+    )
+    typer.echo(result.report.to_markdown())
+    if promote and champions is not None:
+        decision = promote_champion(
+            champions,
+            result,
+            checkpoint_path=_promotion_checkpoint(candidate, checkpoint_path),
+            metadata={"cli": "rl-evaluate"},
+            max_aborted_rate=max_aborted_rate,
+        )
+        typer.echo(f"promote: {decision.promoted} ({decision.reason})")
+    elif promote:
+        typer.secho("Error: --promote requires --champions", err=True)
+        raise typer.Exit(2)
 
 
 @app.command()
