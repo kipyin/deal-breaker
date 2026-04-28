@@ -272,6 +272,7 @@ class JobService:
             checkpoint_out=out_pt,
             seed=cfg.seed,
             from_checkpoint=resume,
+            structured_policy=cfg.structured_policy,
             game_seed_offset=cfg.game_seed_offset,
             on_game_complete=_on_game,
         )

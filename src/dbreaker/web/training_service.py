@@ -32,9 +32,13 @@ def training_artifact_ids(
 def ppo_config_from_request(
     body: TrainingJobRequest, champion_checkpoint: Path | None
 ) -> PPOConfig:
+    pk = body.policy_top_k
+    policy_top_k = None if pk is None or pk == 0 else pk
     return PPOConfig(
         games=body.games,
         rollout_batch_games=body.rollout_batch_games,
+        rollout_target_steps=body.rollout_target_steps,
+        min_rollout_games=body.min_rollout_games,
         player_count=body.player_count,
         max_turns=body.max_turns,
         max_self_play_steps=body.max_self_play_steps,
@@ -47,6 +51,11 @@ def ppo_config_from_request(
         opponent_mix_prob=body.opponent_mix_prob,
         opponent_strategies=tuple(body.opponent_strategies),
         champion_checkpoint=champion_checkpoint,
+        fast_single_learner=body.fast_single_learner,
+        rollout_max_steps_per_game=body.rollout_max_steps_per_game,
+        max_policy_actions=body.max_policy_actions,
+        rollout_workers=body.rollout_workers,
+        policy_top_k=policy_top_k,
     )
 
 
@@ -78,6 +87,8 @@ def rl_search_config(
         runs_per_count=body.runs_per_count,
         games_per_run=body.games_per_run,
         rollout_batch_games=body.rollout_batch_games,
+        rollout_target_steps=body.rollout_target_steps,
+        min_rollout_games=body.min_rollout_games,
         seed=body.seed,
         max_turns=body.max_turns,
         max_self_play_steps=body.max_self_play_steps,
@@ -86,6 +97,15 @@ def rl_search_config(
         opponent_mix_prob=body.opponent_mix_prob,
         opponent_strategies=tuple(body.opponent_strategies),
         champion_checkpoint=champion_checkpoint,
+        fast_single_learner=body.fast_single_learner,
+        rollout_max_steps_per_game=body.rollout_max_steps_per_game,
+        max_policy_actions=body.max_policy_actions,
+        rollout_workers=body.rollout_workers,
+        policy_top_k=(
+            None if body.policy_top_k is None or body.policy_top_k == 0 else body.policy_top_k
+        ),
+        telemetry_per_run=body.telemetry_per_run,
+        structured_policy=body.structured_policy,
     )
 
 

@@ -47,10 +47,21 @@ class TrainingJobRequest(BaseModel):
     player_count: int = Field(ge=2, le=5)
     games: int = Field(default=10, ge=1, le=10_000)
     rollout_batch_games: int = Field(
-        default=50,
+        default=500,
         ge=1,
         le=5000,
         description="Games per rollout before each PPO update (bounds RAM).",
+    )
+    rollout_target_steps: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional learner-step target for PPO update cadence.",
+    )
+    min_rollout_games: int = Field(
+        default=1,
+        ge=1,
+        le=5000,
+        description="Minimum games before step-targeted PPO updates may fire.",
     )
     seed: int = 1
     max_turns: int = 200
@@ -71,6 +82,20 @@ class TrainingJobRequest(BaseModel):
         ]
     )
     champion_checkpoint_id: str | None = None
+    fast_single_learner: bool = Field(
+        default=False,
+        description="Run one neural learner seat per game and heuristic/champion opponents elsewhere.",
+    )
+    rollout_max_steps_per_game: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional rollout step cap per game; truncated games use shaped rankings.",
+    )
+    max_policy_actions: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional legal-action candidate cap before neural policy scoring.",
+    )
     resume_from_checkpoint_id: str | None = Field(
         default=None,
         description="Initial policy weights (continuation training; distinct from champion opponent pool).",
@@ -79,6 +104,21 @@ class TrainingJobRequest(BaseModel):
         default=0,
         ge=0,
         description="Added to per-game seeds; use cumulative prior games when batching training jobs.",
+    )
+    rollout_workers: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description="Parallel CPU rollout workers per batch (incompatible with rollout_target_steps).",
+    )
+    policy_top_k: int | None = Field(
+        default=3,
+        ge=0,
+        description="Per-step softmax top-k telemetry (None or 0 uses default PPOConfig behavior).",
+    )
+    structured_policy: bool = Field(
+        default=False,
+        description="Use StructuredPolicyValueNetwork instead of the default MLP policy.",
     )
     checkpoint_label: str | None = None
 
@@ -91,11 +131,13 @@ class RlSearchJobRequest(BaseModel):
     runs_per_count: int = Field(default=1, ge=1, le=100)
     games_per_run: int = Field(default=10, ge=1, le=10_000)
     rollout_batch_games: int = Field(
-        default=50,
+        default=500,
         ge=1,
         le=5000,
         description="Games per rollout before each PPO update during rl-search.",
     )
+    rollout_target_steps: int | None = Field(default=None, ge=1)
+    min_rollout_games: int = Field(default=1, ge=1, le=5000)
     seed: int = 1
     max_turns: int = 200
     max_self_play_steps: int = 30_000
@@ -111,6 +153,22 @@ class RlSearchJobRequest(BaseModel):
         ]
     )
     champion_checkpoint_id: str | None = None
+    fast_single_learner: bool = False
+    rollout_max_steps_per_game: int | None = Field(default=None, ge=1)
+    max_policy_actions: int | None = Field(default=None, ge=1)
+    rollout_workers: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+    )
+    policy_top_k: int | None = Field(default=3, ge=0)
+    telemetry_per_run: bool = Field(
+        default=False,
+        description=(
+            "Per rl-search run, write run telemetry JSONL next to checkpoint (requires rollout_workers=1)."
+        ),
+    )
+    structured_policy: bool = False
 
 
 class TournamentJobRequest(BaseModel):

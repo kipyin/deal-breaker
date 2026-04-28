@@ -20,6 +20,11 @@ from dbreaker.experiments.rl_search import (
     promote_champion,
     run_rl_search,
 )
+from dbreaker.experiments.strategy_summary_report import (
+    checkpoint_payload_dict,
+    load_metrics_json,
+    render_strategy_summary_text,
+)
 from dbreaker.experiments.tournament import GameProgress, run_tournament
 from dbreaker.replay.log_store import read_events
 
@@ -220,7 +225,11 @@ def tournament(
         ),
     ] = None,
 ) -> None:
-    """Run an AI self-play tournament."""
+    """Run an AI self-play tournament.
+
+    Baseline reporting uses ``dbreaker.experiments.eval_protocol.EVAL_PROTOCOL_REVISION``;
+    see module docstring for surfaced metrics (win rate, Elo, avg rank, outcome shares).
+    """
     logger.info(
         "tournament games={} players={} seed={} max_turns={} max_self_play_steps={} "
         "stalemate_turns={} progress_verbose_lines={}",
@@ -274,13 +283,30 @@ def train(
     max_turns: int = typer.Option(200, "--max-turns", min=1),
     max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
     rollout_batch_games: int = typer.Option(
-        50,
+        500,
         "--rollout-batch-games",
         min=1,
         help=(
             "Collect at most this many self-play games before each PPO update. "
             "Smaller values reduce peak RAM; large --games runs split into multiple updates."
         ),
+    ),
+    rollout_target_steps: Annotated[
+        int | None,
+        typer.Option(
+            "--rollout-target-steps",
+            min=1,
+            help=(
+                "If set, trigger PPO updates after collecting at least this many learner "
+                "steps instead of using only --rollout-batch-games."
+            ),
+        ),
+    ] = None,
+    min_rollout_games: int = typer.Option(
+        1,
+        "--min-rollout-games",
+        min=1,
+        help="Minimum games to collect before honoring --rollout-target-steps.",
     ),
     update_epochs: int = typer.Option(2, "--update-epochs", min=1),
     gamma: float = typer.Option(
@@ -312,6 +338,57 @@ def train(
             help="Optional checkpoint path added to the opponent pool when mixing.",
         ),
     ] = None,
+    fast_single_learner: bool = typer.Option(
+        False,
+        "--fast-single-learner",
+        help=(
+            "Aggressive fast-training mode: one neural learner seat per game; "
+            "other seats use configured opponents."
+        ),
+    ),
+    rollout_max_steps_per_game: Annotated[
+        int | None,
+        typer.Option(
+            "--rollout-max-steps-per-game",
+            min=1,
+            help="Optional per-game rollout step cap; truncated games use ranking-shaped rewards.",
+        ),
+    ] = None,
+    max_policy_actions: Annotated[
+        int | None,
+        typer.Option(
+            "--max-policy-actions",
+            min=1,
+            help="Optional legal-action candidate cap before neural scoring.",
+        ),
+    ] = None,
+    rollout_workers: int = typer.Option(
+        1,
+        "--rollout-workers",
+        min=1,
+        help=(
+            "Parallel CPU rollout workers per batch. Incompatible with --rollout-target-steps. "
+            "Main process stays single-threaded for PPO; worker order vs strict serial RNG may differ."
+        ),
+    ),
+    policy_top_k: int = typer.Option(
+        3,
+        "--policy-top-k",
+        min=0,
+        help="Per-step softmax top-k telemetry (0 disables extra logits work).",
+    ),
+    telemetry_jsonl: Annotated[
+        Path | None,
+        typer.Option(
+            "--telemetry-jsonl",
+            help="Append one JSON object per learner step (requires rollout_workers=1).",
+        ),
+    ] = None,
+    structured_policy: bool = typer.Option(
+        False,
+        "--structured-policy",
+        help="Initialize StructuredPolicyValueNetwork instead of the default MLP policy.",
+    ),
     from_checkpoint: Annotated[
         Path | None,
         typer.Option(
@@ -342,12 +419,22 @@ def train(
             help="Write extended training metrics and per-game rows as JSON.",
         ),
     ] = None,
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        help="PyTorch device: auto (MPS on Apple Silicon, else CUDA if available, else CPU), cpu, mps, cuda.",
+    ),
 ) -> None:
-    """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
+    """Train a checkpoint-backed neural policy with small PPO-style self-play updates.
+
+    Parallel rollouts (--rollout-workers > 1) skip JSONL telemetry and cannot combine with
+    --rollout-target-steps (step-budget batches are serial-only).
+    """
     logger.info(
         "train games={} players={} checkpoint_out={} seed={} game_seed_offset={} "
         "max_turns={} max_self_play_steps={} rollout_batch_games={} update_epochs={} gamma={} opponent_mix={} "
-        "per_game_progress={} metrics_out={}",
+        "rollout_target_steps={} fast_single_learner={} rollout_max_steps_per_game={} "
+        "max_policy_actions={} verbose={} metrics_out={}",
         games,
         players,
         checkpoint_out,
@@ -359,6 +446,10 @@ def train(
         update_epochs,
         gamma,
         opponent_mix,
+        rollout_target_steps,
+        fast_single_learner,
+        rollout_max_steps_per_game,
+        max_policy_actions,
         verbose,
         metrics_out,
     )
@@ -388,9 +479,12 @@ def train(
                 mr,
             )
 
+        pk = None if policy_top_k == 0 else policy_top_k
         config = trainer_module.PPOConfig(
             games=games,
             rollout_batch_games=rollout_batch_games,
+            rollout_target_steps=rollout_target_steps,
+            min_rollout_games=min_rollout_games,
             player_count=players,
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,
@@ -399,15 +493,23 @@ def train(
             opponent_mix_prob=opponent_mix,
             opponent_strategies=_parse_comma_strs(opponents),
             champion_checkpoint=champion,
+            fast_single_learner=fast_single_learner,
+            rollout_max_steps_per_game=rollout_max_steps_per_game,
+            max_policy_actions=max_policy_actions,
+            policy_top_k=pk,
+            rollout_workers=rollout_workers,
         )
         stats = trainer_module.train_self_play(
             config,
             checkpoint_out=checkpoint_out,
             seed=seed,
             from_checkpoint=from_checkpoint,
+            structured_policy=structured_policy,
             game_seed_offset=game_seed_offset,
             on_game_complete=_on_game if verbose else None,
             metrics_out=metrics_out,
+            telemetry_jsonl=telemetry_jsonl,
+            device=device,
         )
     except ImportError as exc:
         typer.secho(f"Error: {exc}", err=True)
@@ -417,10 +519,51 @@ def train(
         if getattr(stats, "mean_entropy", None) is not None
         else ""
     )
+    dev = getattr(stats, "training_device", None) or "?"
     typer.echo(
         f"trained games={stats.games} steps={stats.steps} "
-        f"mean_reward={stats.mean_reward:.3f}{entropy} checkpoint={checkpoint_out}"
+        f"mean_reward={stats.mean_reward:.3f}{entropy} "
+        f"device={dev} checkpoint={checkpoint_out}"
     )
+
+
+@app.command("strategy-summary")
+def strategy_summary(
+    metrics: Annotated[
+        Path | None,
+        typer.Option("--metrics", help="Training metrics JSON (from TrainingStats.as_dict())."),
+    ] = None,
+    checkpoint: Annotated[
+        Path | None,
+        typer.Option("--checkpoint", help="Neural checkpoint .pt for manifest snippet."),
+    ] = None,
+    telemetry: Annotated[
+        Path | None,
+        typer.Option("--telemetry", help="Trajectory telemetry JSONL from train --telemetry-jsonl."),
+    ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", "-o", help="Also write the report to this file."),
+    ] = None,
+) -> None:
+    """Summarize training metrics, optional checkpoint manifest, and telemetry histograms."""
+    if metrics is None and checkpoint is None and telemetry is None:
+        typer.secho(
+            "Error: provide at least one of --metrics, --checkpoint, --telemetry.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    metrics_payload = load_metrics_json(metrics) if metrics is not None else None
+    ck_payload = checkpoint_payload_dict(checkpoint) if checkpoint is not None else None
+    text = render_strategy_summary_text(
+        metrics=metrics_payload,
+        checkpoint_payload=ck_payload,
+        telemetry_path=telemetry,
+    )
+    typer.echo(text, nl=False)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
 
 
 @app.command("rl-search")
@@ -448,7 +591,7 @@ def rl_search(
         max=1.0,
     ),
     rollout_batch_games: int = typer.Option(
-        50,
+        500,
         "--rollout-batch-games",
         min=1,
         help=(
@@ -456,6 +599,11 @@ def rl_search(
             "`dbreaker train --rollout-batch-games`)."
         ),
     ),
+    rollout_target_steps: Annotated[
+        int | None,
+        typer.Option("--rollout-target-steps", min=1),
+    ] = None,
+    min_rollout_games: int = typer.Option(1, "--min-rollout-games", min=1),
     opponents: str = typer.Option(
         "basic,aggressive,defensive,set_completion",
         "--opponents",
@@ -464,6 +612,42 @@ def rl_search(
         Path | None,
         typer.Option("--champion", help="Optional champion checkpoint for opponent mixing."),
     ] = None,
+    fast_single_learner: bool = typer.Option(False, "--fast-single-learner"),
+    rollout_max_steps_per_game: Annotated[
+        int | None,
+        typer.Option("--rollout-max-steps-per-game", min=1),
+    ] = None,
+    max_policy_actions: Annotated[
+        int | None,
+        typer.Option("--max-policy-actions", min=1),
+    ] = None,
+    rollout_workers: int = typer.Option(
+        1,
+        "--rollout-workers",
+        min=1,
+        help=(
+            "Parallel CPU rollout workers per batch (cannot combine with --rollout-target-steps)."
+        ),
+    ),
+    policy_top_k: int = typer.Option(
+        3,
+        "--policy-top-k",
+        min=0,
+        help="Per-step softmax top-k telemetry (0 disables extra logits scoring).",
+    ),
+    telemetry_per_run: bool = typer.Option(
+        False,
+        "--telemetry-per-run",
+        help=(
+            "Write run-NNN.telemetry.jsonl beside each checkpoint (serial rollouts only; "
+            "same constraints as train --telemetry-jsonl)."
+        ),
+    ),
+    structured_policy: bool = typer.Option(
+        False,
+        "--structured-policy",
+        help="Use StructuredPolicyValueNetwork instead of the default MLP policy.",
+    ),
 ) -> None:
     """Train count-specific checkpoints under output_dir with manifests (RL search loop)."""
     logger.info(
@@ -498,6 +682,8 @@ def rl_search(
             runs_per_count=runs,
             games_per_run=games_per_run,
             rollout_batch_games=rollout_batch_games,
+            rollout_target_steps=rollout_target_steps,
+            min_rollout_games=min_rollout_games,
             seed=seed,
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,
@@ -506,6 +692,13 @@ def rl_search(
             opponent_mix_prob=opponent_mix,
             opponent_strategies=_parse_comma_strs(opponents),
             champion_checkpoint=champion,
+            fast_single_learner=fast_single_learner,
+            rollout_max_steps_per_game=rollout_max_steps_per_game,
+            max_policy_actions=max_policy_actions,
+            rollout_workers=rollout_workers,
+            policy_top_k=None if policy_top_k == 0 else policy_top_k,
+            telemetry_per_run=telemetry_per_run,
+            structured_policy=structured_policy,
         )
     )
     for manifest in manifests:
@@ -731,6 +924,20 @@ def benchmark_neural(
     update_epochs: int = typer.Option(2, "--update-epochs", min=1),
     learning_rate: float = typer.Option(3e-4, "--learning-rate"),
     gamma: float = typer.Option(0.99, "--gamma"),
+    rollout_target_steps: Annotated[
+        int | None,
+        typer.Option("--rollout-target-steps", min=1),
+    ] = None,
+    min_rollout_games: int = typer.Option(1, "--min-rollout-games", min=1),
+    fast_single_learner: bool = typer.Option(False, "--fast-single-learner"),
+    rollout_max_steps_per_game: Annotated[
+        int | None,
+        typer.Option("--rollout-max-steps-per-game", min=1),
+    ] = None,
+    max_policy_actions: Annotated[
+        int | None,
+        typer.Option("--max-policy-actions", min=1),
+    ] = None,
     torch_seed: int | None = typer.Option(
         None,
         "--torch-seed",
@@ -745,7 +952,9 @@ def benchmark_neural(
     """Measure neural PPO self-play training throughput (steps/sec) and phase timings."""
     logger.info(
         "benchmark-neural games={} players={} seed={} max_turns={} max_self_play_steps={} "
-        "update_epochs={} learning_rate={} gamma={} torch_seed={} output={}",
+        "update_epochs={} learning_rate={} gamma={} rollout_target_steps={} "
+        "fast_single_learner={} rollout_max_steps_per_game={} max_policy_actions={} "
+        "torch_seed={} output={}",
         games,
         players,
         seed,
@@ -754,6 +963,10 @@ def benchmark_neural(
         update_epochs,
         learning_rate,
         gamma,
+        rollout_target_steps,
+        fast_single_learner,
+        rollout_max_steps_per_game,
+        max_policy_actions,
         torch_seed,
         output.lower().strip(),
     )
@@ -767,6 +980,11 @@ def benchmark_neural(
             update_epochs=update_epochs,
             learning_rate=learning_rate,
             gamma=gamma,
+            rollout_target_steps=rollout_target_steps,
+            min_rollout_games=min_rollout_games,
+            fast_single_learner=fast_single_learner,
+            rollout_max_steps_per_game=rollout_max_steps_per_game,
+            max_policy_actions=max_policy_actions,
             torch_seed=torch_seed,
         )
     except ImportError as exc:
