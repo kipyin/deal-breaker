@@ -40,6 +40,9 @@ def test_run_neural_training_benchmark_deterministic() -> None:
     assert a.mean_reward == b.mean_reward
     assert a.rollout_seconds >= 0.0
     assert a.ppo_update_seconds >= 0.0
+    assert a.ppo_updates >= 1
+    assert a.rollout_steps_per_update
+    assert a.max_legal_actions_per_step >= 0
     # Total includes small overhead between rollout end, PPO start, and final accounting.
     assert a.elapsed_seconds + 1e-9 >= a.rollout_seconds + a.ppo_update_seconds
 
@@ -59,6 +62,11 @@ def test_run_neural_training_benchmark_json_round_trip() -> None:
     assert d["seed"] == 7
     assert d["torch_seed"] is None
     assert d["training_steps"] == report.training_steps
+    assert d["ppo_updates"] == report.ppo_updates
+    assert d["rollout_steps_per_update"] == list(report.rollout_steps_per_update)
+    assert d["truncated_games"] == report.truncated_games
+    assert d["candidate_actions_pruned"] == report.candidate_actions_pruned
+    assert d["max_legal_actions_per_step"] == report.max_legal_actions_per_step
     assert isinstance(report, NeuralTrainingBenchmarkReport)
 
 
@@ -66,4 +74,7 @@ def test_run_neural_training_benchmark_zero_games() -> None:
     report = run_neural_training_benchmark(games=0, player_count=2, seed=1)
     assert report.games == 0
     assert report.training_steps == 0
+    assert report.ppo_updates == 0
+    assert report.rollout_steps_per_update == ()
     assert report.mean_legal_actions_per_step == 0.0
+    assert report.max_legal_actions_per_step == 0

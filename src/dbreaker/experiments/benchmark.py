@@ -169,7 +169,14 @@ class NeuralTrainingBenchmarkReport:
     games_per_sec: float
     mean_reward: float
     mean_entropy: float | None
+    ppo_updates: int
+    rollout_steps_per_update: tuple[int, ...]
     mean_legal_actions_per_step: float
+    max_legal_actions_per_step: int
+    truncated_games: int
+    candidate_actions_before: int
+    candidate_actions_after: int
+    candidate_actions_pruned: int
     max_turns: int
     max_self_play_steps: int
     update_epochs: int
@@ -191,7 +198,15 @@ class NeuralTrainingBenchmarkReport:
             f"games_per_sec={self.games_per_sec:.6f}",
             f"mean_reward={self.mean_reward:.6f}",
             f"mean_entropy={ent}",
+            f"ppo_updates={self.ppo_updates}",
+            "rollout_steps_per_update="
+            + ",".join(str(n) for n in self.rollout_steps_per_update),
             f"mean_legal_actions_per_step={self.mean_legal_actions_per_step:.6f}",
+            f"max_legal_actions_per_step={self.max_legal_actions_per_step}",
+            f"truncated_games={self.truncated_games}",
+            f"candidate_actions_before={self.candidate_actions_before}",
+            f"candidate_actions_after={self.candidate_actions_after}",
+            f"candidate_actions_pruned={self.candidate_actions_pruned}",
             f"max_turns={self.max_turns}",
             f"max_self_play_steps={self.max_self_play_steps}",
             f"update_epochs={self.update_epochs}",
@@ -220,7 +235,12 @@ def run_neural_training_benchmark(
     update_epochs: int = 2,
     gamma: float = 0.99,
     opponent_mix_prob: float = 0.0,
-    rollout_batch_games: int = 50,
+    rollout_batch_games: int = 500,
+    rollout_target_steps: int | None = None,
+    min_rollout_games: int = 1,
+    fast_single_learner: bool = False,
+    rollout_max_steps_per_game: int | None = None,
+    max_policy_actions: int | None = None,
     torch_seed: int | None = None,
 ) -> NeuralTrainingBenchmarkReport:
     """Run a single PPO self-play training pass and report wall time and throughput.
@@ -245,6 +265,11 @@ def run_neural_training_benchmark(
         gamma=gamma,
         opponent_mix_prob=opponent_mix_prob,
         rollout_batch_games=rollout_batch_games,
+        rollout_target_steps=rollout_target_steps,
+        min_rollout_games=min_rollout_games,
+        fast_single_learner=fast_single_learner,
+        rollout_max_steps_per_game=rollout_max_steps_per_game,
+        max_policy_actions=max_policy_actions,
     )
     timings = SelfPlayPhaseTimings()
     stats = train_self_play(
@@ -266,7 +291,14 @@ def run_neural_training_benchmark(
         games_per_sec=games_per_sec,
         mean_reward=stats.mean_reward,
         mean_entropy=stats.mean_entropy,
+        ppo_updates=stats.ppo_updates,
+        rollout_steps_per_update=stats.rollout_steps_per_update,
         mean_legal_actions_per_step=timings.mean_legal_actions_per_step,
+        max_legal_actions_per_step=timings.max_legal_actions_per_step,
+        truncated_games=stats.truncated_games,
+        candidate_actions_before=stats.candidate_actions_before,
+        candidate_actions_after=stats.candidate_actions_after,
+        candidate_actions_pruned=stats.candidate_actions_pruned,
         max_turns=max_turns,
         max_self_play_steps=max_self_play_steps,
         update_epochs=update_epochs,

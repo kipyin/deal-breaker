@@ -23,6 +23,9 @@ class TrainingFn(Protocol):
         *,
         checkpoint_out: Path | None = None,
         seed: int | None = None,
+        structured_policy: bool = False,
+        telemetry_jsonl: Path | None = None,
+        **kwargs: Any,
     ) -> TrainingStats: ...
 
 
@@ -32,7 +35,9 @@ class RLSearchConfig:
     player_counts: tuple[int, ...] = VALID_PLAYER_COUNTS
     runs_per_count: int = 1
     games_per_run: int = 10
-    rollout_batch_games: int = 50
+    rollout_batch_games: int = 500
+    rollout_target_steps: int | None = None
+    min_rollout_games: int = 1
     seed: int = 1
     max_turns: int = 200
     max_self_play_steps: int = 30_000
@@ -41,6 +46,13 @@ class RLSearchConfig:
     opponent_mix_prob: float = 0.0
     opponent_strategies: tuple[str, ...] = DEFAULT_BASELINES
     champion_checkpoint: Path | None = None
+    fast_single_learner: bool = False
+    rollout_max_steps_per_game: int | None = None
+    max_policy_actions: int | None = None
+    rollout_workers: int = 1
+    policy_top_k: int | None = 3
+    telemetry_per_run: bool = False
+    structured_policy: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +178,8 @@ def run_rl_search(
             ppo_config = PPOConfig(
                 games=config.games_per_run,
                 rollout_batch_games=config.rollout_batch_games,
+                rollout_target_steps=config.rollout_target_steps,
+                min_rollout_games=config.min_rollout_games,
                 player_count=player_count,
                 max_turns=config.max_turns,
                 max_self_play_steps=config.max_self_play_steps,
@@ -174,8 +188,22 @@ def run_rl_search(
                 opponent_mix_prob=config.opponent_mix_prob,
                 opponent_strategies=config.opponent_strategies,
                 champion_checkpoint=config.champion_checkpoint,
+                fast_single_learner=config.fast_single_learner,
+                rollout_max_steps_per_game=config.rollout_max_steps_per_game,
+                max_policy_actions=config.max_policy_actions,
+                policy_top_k=config.policy_top_k,
+                rollout_workers=config.rollout_workers,
             )
-            stats = train_fn(ppo_config, checkpoint_out=checkpoint_path, seed=run_seed)
+            telemetry_jsonl: Path | None = None
+            if config.telemetry_per_run:
+                telemetry_jsonl = run_dir / f"run-{run_index:03d}.telemetry.jsonl"
+            stats = train_fn(
+                ppo_config,
+                checkpoint_out=checkpoint_path,
+                seed=run_seed,
+                structured_policy=config.structured_policy,
+                telemetry_jsonl=telemetry_jsonl,
+            )
             manifest = RLRunManifest(
                 player_count=player_count,
                 run_index=run_index,

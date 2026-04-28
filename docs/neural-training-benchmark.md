@@ -5,7 +5,7 @@ Use `dbreaker benchmark-neural` to measure wall time for one `train_self_play` p
 - **rollout_seconds** — trajectory collection (simulation + policy sampling)
 - **ppo_update_seconds** — tensor prep, batched policy/value re-evaluation, and Adam steps
 
-For apples-to-apples comparisons (same step count and rewards), pass **`--torch-seed`** so PyTorch initialization and sampling match between runs. Environment RNG still follows `--seed` per game (`seed + game_index`).
+For apples-to-apples comparisons (same step count and rewards), pass `**--torch-seed`** so PyTorch initialization and sampling match between runs. Environment RNG still follows `--seed` per game (`seed + game_index`).
 
 ## Optimizations in this codebase
 

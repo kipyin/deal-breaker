@@ -57,6 +57,7 @@ def test_run_rl_search_trains_each_requested_count_and_writes_manifests(tmp_path
         *,
         checkpoint_out: Path | None = None,
         seed: int | None = None,
+        **_: object,
     ) -> TrainingStats:
         assert checkpoint_out is not None
         assert seed is not None
