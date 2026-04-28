@@ -273,6 +273,15 @@ def train(
     ),
     max_turns: int = typer.Option(200, "--max-turns", min=1),
     max_self_play_steps: int = typer.Option(30_000, "--max-self-play-steps", min=1),
+    rollout_batch_games: int = typer.Option(
+        50,
+        "--rollout-batch-games",
+        min=1,
+        help=(
+            "Collect at most this many self-play games before each PPO update. "
+            "Smaller values reduce peak RAM; large --games runs split into multiple updates."
+        ),
+    ),
     update_epochs: int = typer.Option(2, "--update-epochs", min=1),
     gamma: float = typer.Option(
         0.99,
@@ -337,7 +346,7 @@ def train(
     """Train a checkpoint-backed neural policy with small PPO-style self-play updates."""
     logger.info(
         "train games={} players={} checkpoint_out={} seed={} game_seed_offset={} "
-        "max_turns={} max_self_play_steps={} update_epochs={} gamma={} opponent_mix={} "
+        "max_turns={} max_self_play_steps={} rollout_batch_games={} update_epochs={} gamma={} opponent_mix={} "
         "per_game_progress={} metrics_out={}",
         games,
         players,
@@ -346,6 +355,7 @@ def train(
         game_seed_offset,
         max_turns,
         max_self_play_steps,
+        rollout_batch_games,
         update_epochs,
         gamma,
         opponent_mix,
@@ -380,6 +390,7 @@ def train(
 
         config = trainer_module.PPOConfig(
             games=games,
+            rollout_batch_games=rollout_batch_games,
             player_count=players,
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,
@@ -436,6 +447,15 @@ def rl_search(
         min=0.0,
         max=1.0,
     ),
+    rollout_batch_games: int = typer.Option(
+        50,
+        "--rollout-batch-games",
+        min=1,
+        help=(
+            "Collect at most this many self-play games per PPO update (same semantics as "
+            "`dbreaker train --rollout-batch-games`)."
+        ),
+    ),
     opponents: str = typer.Option(
         "basic,aggressive,defensive,set_completion",
         "--opponents",
@@ -448,13 +468,14 @@ def rl_search(
     """Train count-specific checkpoints under output_dir with manifests (RL search loop)."""
     logger.info(
         "rl-search output_dir={} runs={} games_per_run={} seed={} max_turns={} "
-        "max_self_play_steps={} update_epochs={} gamma={} opponent_mix={}",
+        "max_self_play_steps={} rollout_batch_games={} update_epochs={} gamma={} opponent_mix={}",
         output_dir,
         runs,
         games_per_run,
         seed,
         max_turns,
         max_self_play_steps,
+        rollout_batch_games,
         update_epochs,
         gamma,
         opponent_mix,
@@ -476,6 +497,7 @@ def rl_search(
             player_counts=_parse_comma_ints(players),
             runs_per_count=runs,
             games_per_run=games_per_run,
+            rollout_batch_games=rollout_batch_games,
             seed=seed,
             max_turns=max_turns,
             max_self_play_steps=max_self_play_steps,

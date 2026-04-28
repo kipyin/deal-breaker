@@ -53,6 +53,38 @@ def test_sparse_terminal_rewards_single_nonzero_per_player() -> None:
     assert rewards == (0.0, -0.5, 0.5)
 
 
+def test_train_self_play_rollout_batches_aggregate_games_and_callbacks(tmp_path: Path) -> None:
+    """Bounded rollout keeps per-game stats; on_game_complete uses global indices 0..games-1."""
+    progress: list[int] = []
+
+    def on_game(i: int, trajectory: object) -> None:
+        progress.append(i)
+
+    stats = train_self_play(
+        PPOConfig(
+            games=3,
+            player_count=2,
+            max_turns=1,
+            max_self_play_steps=25,
+            update_epochs=1,
+            rollout_batch_games=2,
+        ),
+        checkpoint_out=tmp_path / "batched.pt",
+        seed=5,
+        on_game_complete=on_game,
+        metrics_out=tmp_path / "m.json",
+    )
+    assert stats.games == 3
+    assert stats.rollout_batch_games == 2
+    assert progress == [0, 1, 2]
+    d = stats.as_dict()
+    assert d["rollout_batch_games"] == 2
+    assert len(d["per_game"]) == 3
+    assert sum(d["ended_by"].values()) == 3
+    ckpt = load_checkpoint(tmp_path / "batched.pt")
+    assert isinstance(ckpt.model, PolicyValueNetwork)
+
+
 def test_collect_self_play_trajectory_records_rewards_for_each_decision() -> None:
     model = PolicyValueNetwork()
 
@@ -102,6 +134,7 @@ def test_train_self_play_smoke_saves_loadable_checkpoint(tmp_path: Path) -> None
 
     payload = stats.as_dict()
     assert payload.get("game_seed_offset") == 0
+    assert payload.get("rollout_batch_games") == 50
     assert "continued_from" not in payload
     assert "rollout_seconds" in payload
     assert "ppo_update_seconds" in payload
@@ -332,6 +365,37 @@ def test_train_cli_from_checkpoint_and_game_seed_offset(tmp_path: Path) -> None:
     )
     assert r1.exit_code == 0, r1.stdout + r1.stderr
     assert out.is_file()
+
+
+def test_train_cli_accepts_rollout_batch_games(tmp_path: Path) -> None:
+    runner = CliRunner()
+    ck = tmp_path / "roll.pt"
+    result = runner.invoke(
+        app,
+        [
+            "train",
+            "--games",
+            "1",
+            "--players",
+            "2",
+            "--checkpoint-out",
+            str(ck),
+            "--rollout-batch-games",
+            "1",
+            "--max-turns",
+            "1",
+            "--max-self-play-steps",
+            "25",
+            "--update-epochs",
+            "1",
+            "--seed",
+            "42",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert ck.is_file()
+    loaded = load_checkpoint(ck)
+    assert loaded.schema_version == FEATURE_SCHEMA_VERSION
 
 
 def test_training_job_request_resume_and_seed_offset_fields() -> None:

@@ -105,6 +105,10 @@ uv run dbreaker benchmark-neural --games 3 --players 4 --torch-seed 0 --output t
 uv run dbreaker train --players 4 --games 20 \
   --checkpoint-out checkpoints/selfplay.pt
 
+# Large runs: lower peak RAM by splitting rollout/PPO (--rollout-batch-games default 50).
+uv run dbreaker train --players 2 --games 1000 \
+  --rollout-batch-games 50 --checkpoint-out checkpoints/selfplay.pt
+
 # Or train one checkpoint per player count.
 uv run dbreaker rl-search --players 2,3,4,5 --games-per-run 10
 

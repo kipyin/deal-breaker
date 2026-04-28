@@ -34,6 +34,7 @@ def ppo_config_from_request(
 ) -> PPOConfig:
     return PPOConfig(
         games=body.games,
+        rollout_batch_games=body.rollout_batch_games,
         player_count=body.player_count,
         max_turns=body.max_turns,
         max_self_play_steps=body.max_self_play_steps,
@@ -76,6 +77,7 @@ def rl_search_config(
         player_counts=counts,
         runs_per_count=body.runs_per_count,
         games_per_run=body.games_per_run,
+        rollout_batch_games=body.rollout_batch_games,
         seed=body.seed,
         max_turns=body.max_turns,
         max_self_play_steps=body.max_self_play_steps,

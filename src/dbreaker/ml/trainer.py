@@ -22,6 +22,7 @@ TrajectoryProgress = Callable[[int, SelfPlayTrajectory], None]
 @dataclass(frozen=True, slots=True)
 class PPOConfig:
     games: int = 10
+    rollout_batch_games: int = 50
     player_count: int = 4
     max_turns: int = 200
     max_self_play_steps: int = 30_000
@@ -47,6 +48,7 @@ class TrainingStats:
     steps: int
     mean_reward: float
     checkpoint_path: str | None
+    rollout_batch_games: int = 50
     mean_entropy: float | None = None
     policy_loss: float | None = None
     value_loss: float | None = None
@@ -72,6 +74,7 @@ class TrainingStats:
             "mean_reward": self.mean_reward,
             "checkpoint_path": self.checkpoint_path,
             "game_seed_offset": self.game_seed_offset,
+            "rollout_batch_games": self.rollout_batch_games,
         }
         if self.continued_from is not None:
             payload["continued_from"] = self.continued_from
@@ -136,6 +139,81 @@ def _mean_reward_for_trajectory(trajectory: SelfPlayTrajectory) -> float:
     return float(sum(trajectory.rewards) / len(trajectory.rewards))
 
 
+def _effective_rollout_batch_games(config: PPOConfig) -> int:
+    if config.rollout_batch_games < 1:
+        raise ValueError("rollout_batch_games must be at least 1")
+    # When games==0, range(0,0,step) must use step>=1; min(…,games) would be 0.
+    capped = min(config.rollout_batch_games, max(config.games, 1))
+    return max(1, capped)
+
+
+def _ppo_update_from_trajectories(
+    policy: PolicyValueNetwork,
+    optimizer: Any,
+    config: PPOConfig,
+    trajectories: list[SelfPlayTrajectory],
+    torch: Any,
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    """Returns last-epoch scalar metrics after PPO updates, or None if no steps."""
+    steps = [step for trajectory in trajectories for step in trajectory.steps]
+    if not steps:
+        return None, None, None, None, None
+    sparse_parts: list[float] = []
+    for trajectory in trajectories:
+        reward_by_player = {
+            step.player_id: reward
+            for step, reward in zip(trajectory.steps, trajectory.rewards, strict=True)
+        }
+        sparse_parts.extend(
+            sparse_terminal_rewards_for_steps(trajectory.steps, reward_by_player)
+        )
+    old_log_probs = torch.tensor([step.log_prob for step in steps], dtype=torch.float32)
+    old_values = torch.tensor([step.value for step in steps], dtype=torch.float32)
+    sparse_rewards = torch.tensor(sparse_parts, dtype=torch.float32)
+    returns = _discounted_returns(sparse_rewards, config.gamma, torch)
+    advantages = returns - old_values.detach()
+    adv_std = advantages.std(unbiased=False)
+    if adv_std > 1e-8:
+        advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
+    action_indices = torch.tensor(
+        [step.action_index for step in steps],
+        dtype=torch.long,
+    )
+    batches = [step.batch for step in steps]
+
+    mean_entropy: float | None = None
+    policy_loss_f: float | None = None
+    value_loss_f: float | None = None
+    total_loss_f: float | None = None
+    clip_fraction_f: float | None = None
+    for _ in range(config.update_epochs):
+        evaluated = evaluate_action_indices(policy, batches, action_indices)
+        ratios = torch.exp(evaluated.log_probs - old_log_probs)
+        clipped = torch.clamp(
+            ratios,
+            1.0 - config.clip_epsilon,
+            1.0 + config.clip_epsilon,
+        )
+        policy_loss = -torch.min(ratios * advantages, clipped * advantages).mean()
+        value_loss = torch.nn.functional.mse_loss(evaluated.values, returns)
+        entropy_bonus = evaluated.entropies.mean()
+        mean_entropy = float(entropy_bonus.detach().item())
+        clip_fraction = torch.mean((torch.abs(ratios - 1.0) > config.clip_epsilon).float())
+        loss = (
+            policy_loss
+            + config.value_coef * value_loss
+            - config.entropy_coef * entropy_bonus
+        )
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        policy_loss_f = float(policy_loss.detach().item())
+        value_loss_f = float(value_loss.detach().item())
+        total_loss_f = float(loss.detach().item())
+        clip_fraction_f = float(clip_fraction.detach().item())
+    return mean_entropy, policy_loss_f, value_loss_f, total_loss_f, clip_fraction_f
+
+
 def train_self_play(
     config: PPOConfig,
     *,
@@ -164,117 +242,112 @@ def train_self_play(
         policy = PolicyValueNetwork()
     policy.train()
     optimizer = torch.optim.Adam(policy.parameters(), lr=config.learning_rate)
+    roll_batch = _effective_rollout_batch_games(config)
     total_t0 = time.perf_counter()
-    rollout_t0 = time.perf_counter()
-    trajectories: list[SelfPlayTrajectory] = []
-    for game_index in range(config.games):
-        trajectory = collect_training_trajectory(
-            policy,
-            player_count=config.player_count,
-            seed=None
-            if seed is None
-            else seed + game_index + game_seed_offset,
-            max_turns=config.max_turns,
-            max_self_play_steps=config.max_self_play_steps,
-            opponent_mix_prob=config.opponent_mix_prob,
-            opponent_strategies=config.opponent_strategies,
-            champion_checkpoint=config.champion_checkpoint,
-        )
-        trajectories.append(trajectory)
-        if on_game_complete is not None:
-            on_game_complete(game_index, trajectory)
-    rollout_seconds = time.perf_counter() - rollout_t0
-    steps = [step for trajectory in trajectories for step in trajectory.steps]
-    rewards_dense = [reward for trajectory in trajectories for reward in trajectory.rewards]
-    sparse_parts: list[float] = []
-    for trajectory in trajectories:
-        reward_by_player = {
-            step.player_id: reward
-            for step, reward in zip(trajectory.steps, trajectory.rewards, strict=True)
-        }
-        sparse_parts.extend(
-            sparse_terminal_rewards_for_steps(trajectory.steps, reward_by_player)
-        )
+    rollout_seconds = 0.0
+    ppo_update_seconds = 0.0
+
+    per_game_rows: list[dict[str, Any]] = []
+    ended_counts: Counter[str] = Counter()
+    lengths: list[int] = []
+    rewards_dense_all: list[float] = []
+
+    legal_sum = 0
+    n_steps = 0
+
+    sum_weight = 0.0
+    w_entropy = w_pl = w_vl = w_tl = w_cf = 0.0
+
+    for start in range(0, config.games, roll_batch):
+        end = min(start + roll_batch, config.games)
+        rollout_t0 = time.perf_counter()
+        batch_trajs: list[SelfPlayTrajectory] = []
+        for game_index in range(start, end):
+            trajectory = collect_training_trajectory(
+                policy,
+                player_count=config.player_count,
+                seed=None
+                if seed is None
+                else seed + game_index + game_seed_offset,
+                max_turns=config.max_turns,
+                max_self_play_steps=config.max_self_play_steps,
+                opponent_mix_prob=config.opponent_mix_prob,
+                opponent_strategies=config.opponent_strategies,
+                champion_checkpoint=config.champion_checkpoint,
+            )
+            batch_trajs.append(trajectory)
+            if on_game_complete is not None:
+                on_game_complete(game_index, trajectory)
+        rollout_seconds += time.perf_counter() - rollout_t0
+
+        for gi, traj in enumerate(batch_trajs):
+            gidx = start + gi
+            per_game_rows.append(
+                {
+                    "game_index": gidx,
+                    "learner_steps": len(traj.steps),
+                    "ended_by": traj.ended_by,
+                    "mean_reward": _mean_reward_for_trajectory(traj),
+                }
+            )
+            ended_counts[traj.ended_by] += 1
+            lengths.append(len(traj.steps))
+            rewards_dense_all.extend(traj.rewards)
+            for step in traj.steps:
+                legal_sum += len(step.batch.actions)
+
+        n_chunk = sum(len(traj.steps) for traj in batch_trajs)
+        n_steps += n_chunk
+
+        ppo_t0 = time.perf_counter()
+        e, pl, vl, tl, cf = _ppo_update_from_trajectories(policy, optimizer, config, batch_trajs, torch)
+        ppo_update_seconds += time.perf_counter() - ppo_t0
+
+        if e is not None and n_chunk > 0:
+            w = float(n_chunk)
+            sum_weight += w
+            w_entropy += e * w
+            if pl is not None:
+                w_pl += pl * w
+            if vl is not None:
+                w_vl += vl * w
+            if tl is not None:
+                w_tl += tl * w
+            if cf is not None:
+                w_cf += cf * w
+
+        del batch_trajs
+
+    mean_reward = (
+        sum(rewards_dense_all) / len(rewards_dense_all) if rewards_dense_all else 0.0
+    )
+    total_seconds = time.perf_counter() - total_t0
+
     mean_entropy: float | None = None
     policy_loss_f: float | None = None
     value_loss_f: float | None = None
     total_loss_f: float | None = None
     clip_fraction_f: float | None = None
-    ppo_t0 = time.perf_counter()
-    if steps:
-        old_log_probs = torch.tensor([step.log_prob for step in steps], dtype=torch.float32)
-        old_values = torch.tensor([step.value for step in steps], dtype=torch.float32)
-        sparse_rewards = torch.tensor(sparse_parts, dtype=torch.float32)
-        returns = _discounted_returns(sparse_rewards, config.gamma, torch)
-        advantages = returns - old_values.detach()
-        adv_std = advantages.std(unbiased=False)
-        if adv_std > 1e-8:
-            advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
-        action_indices = torch.tensor(
-            [step.action_index for step in steps],
-            dtype=torch.long,
-        )
-        batches = [step.batch for step in steps]
-        for _ in range(config.update_epochs):
-            evaluated = evaluate_action_indices(policy, batches, action_indices)
-            ratios = torch.exp(evaluated.log_probs - old_log_probs)
-            clipped = torch.clamp(
-                ratios,
-                1.0 - config.clip_epsilon,
-                1.0 + config.clip_epsilon,
-            )
-            policy_loss = -torch.min(ratios * advantages, clipped * advantages).mean()
-            value_loss = torch.nn.functional.mse_loss(evaluated.values, returns)
-            entropy_bonus = evaluated.entropies.mean()
-            mean_entropy = float(entropy_bonus.detach().item())
-            clip_fraction = torch.mean(
-                (torch.abs(ratios - 1.0) > config.clip_epsilon).float()
-            )
-            loss = (
-                policy_loss
-                + config.value_coef * value_loss
-                - config.entropy_coef * entropy_bonus
-            )
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            policy_loss_f = float(policy_loss.detach().item())
-            value_loss_f = float(value_loss.detach().item())
-            total_loss_f = float(loss.detach().item())
-            clip_fraction_f = float(clip_fraction.detach().item())
-    ppo_update_seconds = time.perf_counter() - ppo_t0
-    mean_reward = sum(rewards_dense) / len(rewards_dense) if rewards_dense else 0.0
-    total_seconds = time.perf_counter() - total_t0
+    if sum_weight > 0.0:
+        mean_entropy = w_entropy / sum_weight
+        policy_loss_f = w_pl / sum_weight
+        value_loss_f = w_vl / sum_weight
+        total_loss_f = w_tl / sum_weight
+        clip_fraction_f = w_cf / sum_weight
 
-    legal_sum = 0
-    for trajectory in trajectories:
-        for step in trajectory.steps:
-            legal_sum += len(step.batch.actions)
-    n_steps = len(steps)
     mean_legal = float(legal_sum) / float(n_steps) if n_steps else 0.0
-
-    ended_counts = Counter(t.ended_by for t in trajectories)
-    lengths = [len(t.steps) for t in trajectories]
-    mr_per_game = [_mean_reward_for_trajectory(t) for t in trajectories]
     learner_mean = float(sum(lengths) / len(lengths)) if lengths else 0.0
     learner_max = max(lengths) if lengths else 0
-    mr_min = min(mr_per_game) if mr_per_game else 0.0
-    mr_max = max(mr_per_game) if mr_per_game else 0.0
-    per_game_rows: tuple[dict[str, Any], ...] = tuple(
-        {
-            "game_index": i,
-            "learner_steps": len(traj.steps),
-            "ended_by": traj.ended_by,
-            "mean_reward": _mean_reward_for_trajectory(traj),
-        }
-        for i, traj in enumerate(trajectories)
-    )
+    mr_vals = [float(row["mean_reward"]) for row in per_game_rows]
+    mr_min = min(mr_vals) if mr_vals else 0.0
+    mr_max = max(mr_vals) if mr_vals else 0.0
 
     stats = TrainingStats(
         games=config.games,
-        steps=len(steps),
+        steps=n_steps,
         mean_reward=mean_reward,
         checkpoint_path=str(checkpoint_out) if checkpoint_out is not None else None,
+        rollout_batch_games=config.rollout_batch_games,
         mean_entropy=mean_entropy,
         policy_loss=policy_loss_f,
         value_loss=value_loss_f,
@@ -289,7 +362,7 @@ def train_self_play(
         learner_steps_max=learner_max,
         mean_reward_per_game_min=mr_min,
         mean_reward_per_game_max=mr_max,
-        per_game=per_game_rows,
+        per_game=tuple(per_game_rows),
         continued_from=continued_from,
         game_seed_offset=game_seed_offset,
     )

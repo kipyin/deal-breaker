@@ -220,6 +220,7 @@ def run_neural_training_benchmark(
     update_epochs: int = 2,
     gamma: float = 0.99,
     opponent_mix_prob: float = 0.0,
+    rollout_batch_games: int = 50,
     torch_seed: int | None = None,
 ) -> NeuralTrainingBenchmarkReport:
     """Run a single PPO self-play training pass and report wall time and throughput.
@@ -243,6 +244,7 @@ def run_neural_training_benchmark(
         update_epochs=update_epochs,
         gamma=gamma,
         opponent_mix_prob=opponent_mix_prob,
+        rollout_batch_games=rollout_batch_games,
     )
     timings = SelfPlayPhaseTimings()
     stats = train_self_play(

@@ -32,6 +32,7 @@ class RLSearchConfig:
     player_counts: tuple[int, ...] = VALID_PLAYER_COUNTS
     runs_per_count: int = 1
     games_per_run: int = 10
+    rollout_batch_games: int = 50
     seed: int = 1
     max_turns: int = 200
     max_self_play_steps: int = 30_000
@@ -164,6 +165,7 @@ def run_rl_search(
             run_seed = _run_seed(config.seed, player_count=player_count, run_index=run_index)
             ppo_config = PPOConfig(
                 games=config.games_per_run,
+                rollout_batch_games=config.rollout_batch_games,
                 player_count=player_count,
                 max_turns=config.max_turns,
                 max_self_play_steps=config.max_self_play_steps,

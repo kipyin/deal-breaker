@@ -46,6 +46,12 @@ class EvalJobRequest(BaseModel):
 class TrainingJobRequest(BaseModel):
     player_count: int = Field(ge=2, le=5)
     games: int = Field(default=10, ge=1, le=10_000)
+    rollout_batch_games: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Games per rollout before each PPO update (bounds RAM).",
+    )
     seed: int = 1
     max_turns: int = 200
     max_self_play_steps: int = 30_000
@@ -84,6 +90,12 @@ class RlSearchJobRequest(BaseModel):
     )
     runs_per_count: int = Field(default=1, ge=1, le=100)
     games_per_run: int = Field(default=10, ge=1, le=10_000)
+    rollout_batch_games: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Games per rollout before each PPO update during rl-search.",
+    )
     seed: int = 1
     max_turns: int = 200
     max_self_play_steps: int = 30_000
