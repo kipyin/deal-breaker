@@ -6,6 +6,8 @@ import pytest
 from typer.testing import CliRunner
 
 from dbreaker.cli.app import app
+from dbreaker.engine.actions import BankCard, EndTurn, PlayProperty
+from dbreaker.engine.cards import PropertyColor
 from dbreaker.experiments.tournament import run_tournament
 from dbreaker.ml.checkpoint import load_checkpoint, save_checkpoint
 from dbreaker.ml.features import FEATURE_SCHEMA_VERSION
@@ -14,6 +16,8 @@ from dbreaker.ml.trainer import PPOConfig, train_self_play
 from dbreaker.ml.trajectory import (
     TrajectoryStep,
     collect_self_play_trajectory,
+    collect_training_trajectory,
+    prune_policy_actions,
     sparse_terminal_rewards_for_steps,
 )
 from dbreaker.strategies.registry import create_strategy
@@ -53,6 +57,25 @@ def test_sparse_terminal_rewards_single_nonzero_per_player() -> None:
     assert rewards == (0.0, -0.5, 0.5)
 
 
+def test_train_self_play_parallel_rollout_workers(tmp_path: Path) -> None:
+    stats = train_self_play(
+        PPOConfig(
+            games=2,
+            player_count=2,
+            max_turns=1,
+            max_self_play_steps=25,
+            update_epochs=1,
+            rollout_batch_games=2,
+            rollout_workers=2,
+            policy_top_k=2,
+        ),
+        checkpoint_out=tmp_path / "parallel.pt",
+        seed=21,
+    )
+    assert stats.games == 2
+    assert stats.steps >= 1
+
+
 def test_train_self_play_rollout_batches_aggregate_games_and_callbacks(tmp_path: Path) -> None:
     """Bounded rollout keeps per-game stats; on_game_complete uses global indices 0..games-1."""
     progress: list[int] = []
@@ -83,6 +106,101 @@ def test_train_self_play_rollout_batches_aggregate_games_and_callbacks(tmp_path:
     assert sum(d["ended_by"].values()) == 3
     ckpt = load_checkpoint(tmp_path / "batched.pt")
     assert isinstance(ckpt.model, PolicyValueNetwork)
+
+
+def test_train_self_play_can_update_by_rollout_target_steps(tmp_path: Path) -> None:
+    stats = train_self_play(
+        PPOConfig(
+            games=3,
+            player_count=2,
+            max_turns=2,
+            max_self_play_steps=30,
+            update_epochs=1,
+            rollout_batch_games=50,
+            rollout_target_steps=1,
+            min_rollout_games=1,
+        ),
+        checkpoint_out=tmp_path / "target-steps.pt",
+        seed=6,
+    )
+
+    payload = stats.as_dict()
+    assert stats.games == 3
+    assert stats.ppo_updates >= 2
+    assert len(stats.rollout_steps_per_update) == stats.ppo_updates
+    assert payload["rollout_target_steps"] == 1
+    assert payload["ppo_updates"] == stats.ppo_updates
+    assert payload["rollout_steps_per_update"] == list(stats.rollout_steps_per_update)
+
+
+def test_single_learner_fast_mode_records_one_seat_and_metrics() -> None:
+    trajectory = collect_training_trajectory(
+        PolicyValueNetwork(),
+        player_count=3,
+        seed=9,
+        max_turns=3,
+        max_self_play_steps=80,
+        single_learner=True,
+        opponent_strategies=("basic",),
+    )
+
+    learner_ids = {step.player_id for step in trajectory.steps}
+    assert trajectory.fast_single_learner is True
+    assert len(learner_ids) <= 1
+    assert trajectory.learner_seat is not None
+    assert len(trajectory.legal_action_counts_before_pruning) == len(trajectory.steps)
+    assert len(trajectory.legal_action_counts_after_pruning) == len(trajectory.steps)
+
+
+def test_rollout_truncation_uses_shaped_terminal_rewards() -> None:
+    trajectory = collect_training_trajectory(
+        PolicyValueNetwork(),
+        player_count=2,
+        seed=12,
+        max_turns=200,
+        max_self_play_steps=100,
+        rollout_max_steps_per_game=1,
+    )
+
+    assert trajectory.ended_by == "truncated_steps"
+    assert len(trajectory.steps) == 1
+    assert len(trajectory.rewards) == 1
+    assert set(trajectory.rewards).issubset({-1.0, 1.0})
+
+
+def test_policy_action_pruning_preserves_forced_and_end_turn_actions() -> None:
+    legal_actions = [
+        BankCard("money-1"),
+        PlayProperty("property-1", PropertyColor.BLUE),
+        EndTurn(),
+    ]
+
+    pruned = prune_policy_actions(legal_actions, max_policy_actions=2)
+
+    assert len(pruned) == 2
+    assert any(isinstance(action, EndTurn) for action in pruned)
+    assert any(isinstance(action, PlayProperty) for action in pruned)
+
+
+def test_train_self_play_reports_truncation_and_pruning_metrics(tmp_path: Path) -> None:
+    stats = train_self_play(
+        PPOConfig(
+            games=1,
+            player_count=2,
+            max_turns=200,
+            max_self_play_steps=100,
+            update_epochs=1,
+            rollout_max_steps_per_game=1,
+            max_policy_actions=1,
+        ),
+        checkpoint_out=tmp_path / "fast.pt",
+        seed=13,
+    )
+
+    payload = stats.as_dict()
+    assert payload["truncated_games"] == 1
+    assert payload["candidate_actions_before"] >= payload["candidate_actions_after"]
+    assert "candidate_actions_pruned" in payload
 
 
 def test_collect_self_play_trajectory_records_rewards_for_each_decision() -> None:
@@ -134,13 +252,19 @@ def test_train_self_play_smoke_saves_loadable_checkpoint(tmp_path: Path) -> None
 
     payload = stats.as_dict()
     assert payload.get("game_seed_offset") == 0
-    assert payload.get("rollout_batch_games") == 50
+    assert payload.get("rollout_batch_games") == 500
     assert "continued_from" not in payload
     assert "rollout_seconds" in payload
     assert "ppo_update_seconds" in payload
     assert "total_seconds" in payload
+    assert payload["ppo_updates"] == 1
+    assert payload["rollout_steps_per_update"] == [stats.steps]
+    assert payload["truncated_games"] >= 0
+    assert payload["candidate_actions_pruned"] >= 0
     assert "ended_by" in payload
     assert sum(payload["ended_by"].values()) == 2
+    assert "max_legal_actions_per_step" in payload
+    assert payload["max_legal_actions_per_step"] >= 0
     assert "per_game" in payload
     assert len(payload["per_game"]) == 2
     for row in payload["per_game"]:
@@ -406,7 +530,15 @@ def test_training_job_request_resume_and_seed_offset_fields() -> None:
         games=1,
         resume_from_checkpoint_id="ckpt_x",
         game_seed_offset=100,
+        rollout_target_steps=32,
+        fast_single_learner=True,
+        rollout_max_steps_per_game=20,
+        max_policy_actions=8,
     )
     d = body.model_dump()
     assert d["resume_from_checkpoint_id"] == "ckpt_x"
     assert d["game_seed_offset"] == 100
+    assert d["rollout_target_steps"] == 32
+    assert d["fast_single_learner"] is True
+    assert d["rollout_max_steps_per_game"] == 20
+    assert d["max_policy_actions"] == 8
