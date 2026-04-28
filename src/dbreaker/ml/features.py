@@ -99,6 +99,13 @@ class EncodedActionBatch:
     actions: tuple[Action, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _EncodingContext:
+    card_by_id: dict[str, Card]
+    zone_by_id: dict[str, str]
+    value_by_id: dict[str, int]
+
+
 def encode_observation(observation: Observation) -> tuple[float, ...]:
     base = _encode_observation_base(observation)
     assert len(base) == _OBS_BASE_DIM, f"{len(base)} != {_OBS_BASE_DIM}"
@@ -113,8 +120,11 @@ def encode_observation(observation: Observation) -> tuple[float, ...]:
     return base + extra
 
 
-def encode_action(observation: Observation, action: Action) -> tuple[float, ...]:
-    related_cards = _related_cards(observation, action)
+def encode_action(
+    observation: Observation, action: Action, *, context: _EncodingContext | None = None
+) -> tuple[float, ...]:
+    ctx = context or _build_encoding_context(observation)
+    related_cards = _related_cards(observation, action, context=ctx)
     action_color = _action_color(action)
     numeric = (
         _scale(len(related_cards), 10.0),
@@ -134,7 +144,7 @@ def encode_action(observation: Observation, action: Action) -> tuple[float, ...]
         + _one_hot(action_color, _COLORS)
     )
     assert len(v1) == _ACTION_V1_DIM
-    extra = _encode_action_impact(observation, action)
+    extra = _encode_action_impact(observation, action, context=ctx)
     assert len(extra) == _ACTION_EXTRA_DIM
     return v1 + extra
 
@@ -142,10 +152,13 @@ def encode_action(observation: Observation, action: Action) -> tuple[float, ...]
 def encode_legal_actions(
     observation: Observation, legal_actions: list[Action]
 ) -> EncodedActionBatch:
+    context = _build_encoding_context(observation)
     return EncodedActionBatch(
         schema_version=FEATURE_SCHEMA_VERSION,
         observation_features=encode_observation(observation),
-        action_features=tuple(encode_action(observation, action) for action in legal_actions),
+        action_features=tuple(
+            encode_action(observation, action, context=context) for action in legal_actions
+        ),
         actions=tuple(legal_actions),
     )
 
@@ -304,7 +317,10 @@ def _encode_hand_heuristics(observation: Observation) -> tuple[float, ...]:
     )
 
 
-def _encode_action_impact(observation: Observation, action: Action) -> tuple[float, ...]:
+def _encode_action_impact(
+    observation: Observation, action: Action, *, context: _EncodingContext | None = None
+) -> tuple[float, ...]:
+    ctx = context or _build_encoding_context(observation)
     play_complete = 0.0
     progress_delta = 0.0
     if isinstance(action, PlayProperty):
@@ -333,19 +349,23 @@ def _encode_action_impact(observation: Observation, action: Action) -> tuple[flo
     pay_n = 0.0
     if isinstance(action, PayWithAssets):
         pay_sum = _scale(
-            sum(_asset_value_for_payment(observation, cid) for cid in action.card_ids),
+            sum(_asset_value_for_payment(observation, cid, context=ctx) for cid in action.card_ids),
             50.0,
         )
         pend = observation.pending
         if pend is not None and pend.amount > 0:
             tot = float(
-                sum(_asset_value_for_payment(observation, cid) for cid in action.card_ids)
+                sum(
+                    _asset_value_for_payment(observation, cid, context=ctx)
+                    for cid in action.card_ids
+                )
             )
             pay_ratio = _scale(tot, float(pend.amount))
         pay_prop = (
             1.0
             if any(
-                _card_in_zone(observation, cid) == "property" for cid in action.card_ids
+                _card_in_zone(observation, cid, context=ctx) == "property"
+                for cid in action.card_ids
             )
             else 0.0
         )
@@ -353,7 +373,7 @@ def _encode_action_impact(observation: Observation, action: Action) -> tuple[flo
     is_attack = 0.0
     is_building = 0.0
     if isinstance(action, PlayActionCard):
-        card = _visible_card_by_id(observation, action.card_id)
+        card = _visible_card_by_id(observation, action.card_id, context=ctx)
         if card is not None and card.action_subtype is not None:
             st = card.action_subtype
             if st in (ActionSubtype.DEAL_BREAKER, ActionSubtype.SLY_DEAL, ActionSubtype.FORCED_DEAL):
@@ -367,7 +387,7 @@ def _encode_action_impact(observation: Observation, action: Action) -> tuple[flo
             jsn_block = 1.0
     bank_v = 0.0
     if isinstance(action, BankCard):
-        c = _visible_card_by_id(observation, action.card_id)
+        c = _visible_card_by_id(observation, action.card_id, context=ctx)
         if c is not None:
             bank_v = _scale(c.value, 10.0)
     return (
@@ -390,7 +410,11 @@ def _encode_action_impact(observation: Observation, action: Action) -> tuple[flo
     )
 
 
-def _card_in_zone(observation: Observation, card_id: str) -> str:
+def _card_in_zone(
+    observation: Observation, card_id: str, *, context: _EncodingContext | None = None
+) -> str:
+    if context is not None:
+        return context.zone_by_id.get(card_id, "unknown")
     for card in observation.hand:
         if card.id == card_id:
             return "hand"
@@ -409,7 +433,11 @@ def _card_in_zone(observation: Observation, card_id: str) -> str:
     return "unknown"
 
 
-def _asset_value_for_payment(observation: Observation, card_id: str) -> int:
+def _asset_value_for_payment(
+    observation: Observation, card_id: str, *, context: _EncodingContext | None = None
+) -> int:
+    if context is not None:
+        return context.value_by_id.get(card_id, 0)
     for card in observation.hand:
         if card.id == card_id:
             return card.value
@@ -487,9 +515,14 @@ def _action_type_one_hot(action: Action) -> tuple[float, ...]:
     return tuple(1.0 if isinstance(action, action_type) else 0.0 for action_type in _ACTION_TYPES)
 
 
-def _related_cards(observation: Observation, action: Action) -> tuple[Card, ...]:
+def _related_cards(
+    observation: Observation, action: Action, *, context: _EncodingContext | None = None
+) -> tuple[Card, ...]:
+    ctx = context or _build_encoding_context(observation)
     card_ids = _action_card_ids(action)
-    cards = tuple(_visible_card_by_id(observation, card_id) for card_id in card_ids)
+    cards = tuple(
+        _visible_card_by_id(observation, card_id, context=ctx) for card_id in card_ids
+    )
     return tuple(card for card in cards if card is not None)
 
 
@@ -519,7 +552,11 @@ def _action_card_ids(action: Action) -> tuple[str, ...]:
     return ()
 
 
-def _visible_card_by_id(observation: Observation, card_id: str) -> Card | None:
+def _visible_card_by_id(
+    observation: Observation, card_id: str, *, context: _EncodingContext | None = None
+) -> Card | None:
+    if context is not None:
+        return context.card_by_id.get(card_id)
     for card in observation.hand:
         if card.id == card_id:
             return card
@@ -536,6 +573,37 @@ def _visible_card_by_id(observation: Observation, card_id: str) -> Card | None:
                 if card.id == card_id:
                     return card
     return None
+
+
+def _build_encoding_context(observation: Observation) -> _EncodingContext:
+    card_by_id: dict[str, Card] = {}
+    zone_by_id: dict[str, str] = {}
+    value_by_id: dict[str, int] = {}
+
+    def add(card: Card, zone: str) -> None:
+        if card.id in card_by_id:
+            return
+        card_by_id[card.id] = card
+        zone_by_id[card.id] = zone
+        value_by_id[card.id] = card.value
+
+    for card in observation.hand:
+        add(card, "hand")
+    for card in observation.bank:
+        add(card, "bank")
+    for cards in observation.properties.values():
+        for card in cards:
+            add(card, "property")
+    for opponent in observation.opponents.values():
+        for cards in opponent.properties.values():
+            for card in cards:
+                add(card, "property")
+
+    return _EncodingContext(
+        card_by_id=card_by_id,
+        zone_by_id=zone_by_id,
+        value_by_id=value_by_id,
+    )
 
 
 def _action_color(action: Action) -> PropertyColor | None:

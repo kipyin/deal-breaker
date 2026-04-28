@@ -24,7 +24,9 @@ class NeuralStrategy:
         if not legal_actions:
             raise ValueError("legal_actions cannot be empty")
         batch = encode_legal_actions(observation, legal_actions)
-        selection = choose_action_index(self._model, batch, greedy=True)
+        selection = choose_action_index(
+            self._model, batch, greedy=True, include_entropy=False
+        )
         return StrategyDecision(
             action=legal_actions[selection.index],
             reason_summary=f"{self.name} selected legal action #{selection.index}.",
