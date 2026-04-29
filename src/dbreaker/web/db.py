@@ -264,6 +264,20 @@ def update_job_status(
         fields.append("error = ?")
         args.append(error)
     args.append(job_id)
+
+    # Validate fragments to prevent SQL injection via f-string join
+    allowed = {
+        "status = ?",
+        "updated_at = ?",
+        "started_at = coalesce(started_at, ?)",
+        "finished_at = ?",
+        "result_json = ?",
+        "error = ?",
+    }
+    for f in fields:
+        if f not in allowed:
+            raise ValueError(f"Forbidden field update: {f}")
+
     conn.execute(f"update jobs set {', '.join(fields)} where id = ?", args)
     conn.commit()
 
@@ -305,6 +319,10 @@ def list_jobs(
         args.append(status)
     q = "select * from jobs"
     if where:
+        allowed = {"kind = ?", "status = ?"}
+        for w in where:
+            if w not in allowed:
+                raise ValueError(f"Forbidden where clause: {w}")
         q += " where " + " and ".join(where)
     q += " order by created_at desc limit ? offset ?"
     args.extend([limit, offset])
@@ -718,6 +736,10 @@ def list_games(
         args.append(status)
     q = "select * from games"
     if where:
+        allowed = {"status = ?"}
+        for w in where:
+            if w not in allowed:
+                raise ValueError(f"Forbidden where clause: {w}")
         q += " where " + " and ".join(where)
     q += " order by created_at desc limit ? offset ?"
     args.extend([limit, offset])
@@ -780,6 +802,10 @@ def list_checkpoints(
         args.append(player_count)
     q = "select * from checkpoints"
     if where:
+        allowed = {"player_count = ?"}
+        for w in where:
+            if w not in allowed:
+                raise ValueError(f"Forbidden where clause: {w}")
         q += " where " + " and ".join(where)
     q += " order by created_at desc limit ? offset ?"
     args.extend([limit, offset])
@@ -832,6 +858,10 @@ def list_artifacts(
         args.append(kind)
     q = "select * from artifacts"
     if where:
+        allowed = {"kind = ?"}
+        for w in where:
+            if w not in allowed:
+                raise ValueError(f"Forbidden where clause: {w}")
         q += " where " + " and ".join(where)
     q += " order by created_at desc limit ? offset ?"
     args.extend([limit, offset])
