@@ -88,8 +88,8 @@ def is_legal_payment_selection(
 
 def _reachable_bank_sums(bank_by_value: dict[int, list[Card]]) -> set[int]:
     reachable: set[int] = {0}
-    for value in sorted(bank_by_value.keys()):
-        cnt = len(bank_by_value[value])
+    for value, cards in sorted(bank_by_value.items()):
+        cnt = len(cards)
         new_reachable: set[int] = set()
         for base in reachable:
             for take in range(0, cnt + 1):
@@ -137,8 +137,7 @@ def _resolve_bank_multiset(
     bank_by_value: dict[int, list[Card]], multiset: dict[int, int]
 ) -> list[Card]:
     out: list[Card] = []
-    for value in sorted(multiset.keys()):
-        take = multiset[value]
+    for value, take in sorted(multiset.items()):
         out.extend(bank_by_value[value][:take])
     return out
 
