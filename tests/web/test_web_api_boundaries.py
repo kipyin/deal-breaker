@@ -172,3 +172,59 @@ def test_artifact_download_serves_file(web_client: TestClient) -> None:
     r = web_client.get(f"/api/artifacts/{aid}/download")
     assert r.status_code == 200
     assert r.content == b"hello"
+
+
+def test_post_action_invalid_payload_returns_400(web_client: TestClient) -> None:
+    # 1. Setup a game
+    r = web_client.post("/api/games", json={"player_count": 2})
+    assert r.status_code == 201
+    game_id = r.json()["game_id"]
+
+    # 2. Missing 'type' -> KeyError
+    bad1 = web_client.post(
+        f"/api/games/{game_id}/actions",
+        json={
+            "player_id": "P1",
+            "expected_version": 0,
+            "action": {"card_id": "c1"},
+        },
+    )
+    assert bad1.status_code == 400
+    assert "invalid action" in bad1.json()["detail"]
+    assert "type" in bad1.json()["detail"]
+
+    # 3. Invalid 'type' -> ValueError
+    bad2 = web_client.post(
+        f"/api/games/{game_id}/actions",
+        json={
+            "player_id": "P1",
+            "expected_version": 0,
+            "action": {"type": "NoLuckAction"},
+        },
+    )
+    assert bad2.status_code == 400
+    assert "invalid action" in bad2.json()["detail"]
+
+    # 4. Invalid 'color' value -> ValueError
+    bad3 = web_client.post(
+        f"/api/games/{game_id}/actions",
+        json={
+            "player_id": "P1",
+            "expected_version": 0,
+            "action": {"type": "PlayProperty", "card_id": "c1", "color": "rainbow"},
+        },
+    )
+    assert bad3.status_code == 400
+    assert "invalid action" in bad3.json()["detail"]
+
+    # 5. Invalid 'card_ids' type -> TypeError
+    bad4 = web_client.post(
+        f"/api/games/{game_id}/actions",
+        json={
+            "player_id": "P1",
+            "expected_version": 0,
+            "action": {"type": "PayWithAssets", "card_ids": 123},
+        },
+    )
+    assert bad4.status_code == 400
+    assert "invalid action" in bad4.json()["detail"]
