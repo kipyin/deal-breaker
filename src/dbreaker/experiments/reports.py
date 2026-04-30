@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dbreaker.experiments.eval_protocol import EVAL_PROTOCOL_REVISION
+from dbreaker.experiments.eval_protocol import EVAL_PROTOCOL_REVISION, GAUNTLET_PROTOCOL_REVISION
 from dbreaker.experiments.metrics import StrategySummary
 
 
@@ -28,6 +28,7 @@ class TournamentReport:
             "# Tournament Report",
             "",
             f"Evaluation protocol revision: `{EVAL_PROTOCOL_REVISION}`",
+            f"Gauntlet protocol revision: `{GAUNTLET_PROTOCOL_REVISION}`",
             "",
             f"Outcomes: {self.games_with_winner} completed with a property-set winner, "
             f"{self.games_max_turn} hit max turns (cap {self.max_turns_cap}), "

@@ -119,6 +119,8 @@ class JobService:
         max_turns: int,
         max_self_play_steps: int,
         champions_manifest_path: str | None,
+        policy_pool_manifest_path: str | None = None,
+        policy_pool_sample_size: int = 0,
         promote_if_passes: bool = False,
         max_aborted_rate: float = 0.0,
     ) -> dict[str, Any]:
@@ -131,6 +133,8 @@ class JobService:
             "max_turns": max_turns,
             "max_self_play_steps": max_self_play_steps,
             "champions_manifest_path": champions_manifest_path,
+            "policy_pool_manifest_path": policy_pool_manifest_path,
+            "policy_pool_sample_size": policy_pool_sample_size,
             "promote_if_passes": promote_if_passes,
             "max_aborted_rate": max_aborted_rate,
         }
@@ -208,6 +212,14 @@ class JobService:
             raise ValueError(f"checkpoint file missing: {p}")
         return p
 
+    def _resolve_optional_artifact_file(self, rel: str | None) -> Path | None:
+        if not rel:
+            return None
+        p = self._config.artifact_root / rel
+        if not p.is_file():
+            raise ValueError(f"artifact file missing: {p}")
+        return p
+
     def _run(self) -> None:
         while not self._stop.is_set():
             with self._cond:
@@ -250,7 +262,8 @@ class JobService:
         cfg = TrainingJobRequest.model_validate_json(row.config_json)
         ch = self._resolve_champion_path(cfg.champion_checkpoint_id)
         resume = self._resolve_champion_path(cfg.resume_from_checkpoint_id)
-        ppo = tr.ppo_config_from_request(cfg, ch)
+        pool_manifest = self._resolve_optional_artifact_file(cfg.policy_pool_manifest_path)
+        ppo = tr.ppo_config_from_request(cfg, ch, policy_pool_manifest=pool_manifest)
         ckpt_id, rel_pt, rel_json = tr.training_artifact_ids(
             job_id, cfg.player_count, cfg.checkpoint_label
         )
@@ -308,10 +321,14 @@ class JobService:
     def _run_rl_search_job(self, job_id: str, row: db_mod.JobRow) -> None:
         cfg = RlSearchJobRequest.model_validate_json(row.config_json)
         ch = self._resolve_champion_path(cfg.champion_checkpoint_id)
+        pool_manifest = self._resolve_optional_artifact_file(cfg.policy_pool_manifest_path)
         out_dir = self._config.artifact_root / "checkpoints" / "rl-search"
         out_dir.mkdir(parents=True, exist_ok=True)
         rc = tr.rl_search_config(
-            cfg, output_dir=out_dir, champion_checkpoint=ch
+            cfg,
+            output_dir=out_dir,
+            champion_checkpoint=ch,
+            policy_pool_manifest=pool_manifest,
         )
         manifests = self._rl_search_fn(rc)
         indexed: list[str] = []
@@ -405,6 +422,13 @@ class JobService:
         else:
             p = Path(ch)
             ch_path = p if p.is_absolute() else (self._config.artifact_root / p)
+        ppm = cfg.get("policy_pool_manifest_path")
+        pool_path: Path | None
+        if ppm is None:
+            pool_path = None
+        else:
+            pp = Path(str(ppm))
+            pool_path = pp if pp.is_absolute() else (self._config.artifact_root / pp)
         eval_config = EvaluationConfig(
             player_count=cfg["player_count"],
             candidate=cfg["candidate"],
@@ -414,6 +438,8 @@ class JobService:
             max_turns=cfg["max_turns"],
             max_self_play_steps=cfg["max_self_play_steps"],
             champions_path=ch_path,
+            policy_pool_manifest=pool_path,
+            policy_pool_sample_size=int(cfg.get("policy_pool_sample_size", 0)),
         )
         result = self._evaluate_fn(eval_config)
         rdict = evaluation_result_to_dict(result)
@@ -442,6 +468,8 @@ class JobService:
             rdict["promotion"] = {
                 "promoted": dec.promoted,
                 "reason": dec.reason,
+                "blockers": list(dec.blockers),
+                "protocol_revision": dec.protocol_revision,
             }
             promoted = dec.promoted
             prom_reason = dec.reason

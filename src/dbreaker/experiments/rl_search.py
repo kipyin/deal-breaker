@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import json
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from dbreaker.experiments.eval_protocol import (
+    GAUNTLET_PROTOCOL_REVISION,
+    MIN_GAUNTLET_GAMES_FOR_PROMOTION,
+)
+from dbreaker.experiments.league import (
+    PolicyPoolEntry,
+    append_policy_pool_entry,
+    load_policy_pool_per_player,
+    neural_strategy_spec,
+    sample_pool_entries_without_replacement,
+)
 from dbreaker.experiments.reports import TournamentReport
 from dbreaker.experiments.tournament import run_tournament
 from dbreaker.ml.features import FEATURE_SCHEMA_VERSION
@@ -46,6 +58,7 @@ class RLSearchConfig:
     opponent_mix_prob: float = 0.0
     opponent_strategies: tuple[str, ...] = DEFAULT_BASELINES
     champion_checkpoint: Path | None = None
+    policy_pool_manifest: Path | None = None
     fast_single_learner: bool = False
     rollout_max_steps_per_game: int | None = None
     max_policy_actions: int | None = None
@@ -107,6 +120,8 @@ class EvaluationConfig:
     candidate: str
     baselines: tuple[str, ...] = DEFAULT_BASELINES
     champions_path: Path | None = None
+    policy_pool_manifest: Path | None = None
+    policy_pool_sample_size: int = 0
     games: int = 20
     seed: int = 1
     max_turns: int = 200
@@ -155,6 +170,8 @@ class EvaluationResult:
 class PromotionDecision:
     promoted: bool
     reason: str
+    blockers: tuple[str, ...] = ()
+    protocol_revision: str = GAUNTLET_PROTOCOL_REVISION
 
 
 def run_rl_search(
@@ -188,6 +205,8 @@ def run_rl_search(
                 opponent_mix_prob=config.opponent_mix_prob,
                 opponent_strategies=config.opponent_strategies,
                 champion_checkpoint=config.champion_checkpoint,
+                policy_pool_manifest=config.policy_pool_manifest,
+                opponent_neural_checkpoints=(),
                 fast_single_learner=config.fast_single_learner,
                 rollout_max_steps_per_game=config.rollout_max_steps_per_game,
                 max_policy_actions=config.max_policy_actions,
@@ -231,7 +250,17 @@ def evaluate_candidate(
     if config.games < 1:
         raise ValueError("games must be at least 1")
     previous_champion = _previous_champion_strategy(config.champions_path, config.player_count)
-    strategies = _dedupe((config.candidate, *config.baselines, previous_champion))
+    pool_specs: list[str] = []
+    if config.policy_pool_manifest is not None and config.policy_pool_sample_size > 0:
+        entries = load_policy_pool_per_player(config.policy_pool_manifest, config.player_count)
+        rng = random.Random(config.seed + 7919)
+        sampled = sample_pool_entries_without_replacement(
+            entries,
+            config.policy_pool_sample_size,
+            rng,
+        )
+        pool_specs = [neural_strategy_spec(entry.checkpoint_path) for entry in sampled]
+    strategies = _dedupe((*pool_specs, config.candidate, *config.baselines, previous_champion))
     report = tournament_fn(
         player_count=config.player_count,
         games=config.games,
@@ -285,16 +314,24 @@ def promote_champion(
     checkpoint_path: str,
     metadata: dict[str, Any] | None = None,
     max_aborted_rate: float = 0.0,
+    policy_pool_path: Path | None = None,
+    pool_tags: tuple[str, ...] = (),
 ) -> PromotionDecision:
     champions = load_champions_manifest(champions_path)
     current = champions[evaluation.player_count]
-    blocker = _promotion_blocker(
+    blockers = _promotion_blockers(
         evaluation,
         current=current,
         max_aborted_rate=max_aborted_rate,
     )
-    if blocker is not None:
-        return PromotionDecision(promoted=False, reason=blocker)
+    if blockers:
+        primary = blockers[0]
+        return PromotionDecision(
+            promoted=False,
+            reason=primary,
+            blockers=tuple(blockers),
+            protocol_revision=GAUNTLET_PROTOCOL_REVISION,
+        )
 
     entry_metadata = dict(metadata or {})
     entry_metadata.update(
@@ -313,19 +350,39 @@ def promote_champion(
         metadata=entry_metadata,
     )
     write_champions_manifest(champions_path, champions)
-    return PromotionDecision(promoted=True, reason="candidate promoted")
+    if policy_pool_path is not None:
+        append_policy_pool_entry(
+            policy_pool_path,
+            PolicyPoolEntry(
+                checkpoint_path=checkpoint_path,
+                player_count=evaluation.player_count,
+                evaluation_score=evaluation.candidate_score,
+                tags=tuple(pool_tags),
+                metadata={"evaluation_score": evaluation.candidate_score, **entry_metadata},
+            ),
+        )
+    return PromotionDecision(
+        promoted=True,
+        reason="candidate promoted",
+        blockers=(),
+        protocol_revision=GAUNTLET_PROTOCOL_REVISION,
+    )
 
 
-def _promotion_blocker(
+def _promotion_blockers(
     evaluation: EvaluationResult,
     *,
     current: ChampionEntry | None,
     max_aborted_rate: float,
-) -> str | None:
+) -> list[str]:
+    blockers: list[str] = []
+    if evaluation.total_games < MIN_GAUNTLET_GAMES_FOR_PROMOTION:
+        blockers.append(
+            f"insufficient_games: {evaluation.total_games} < {MIN_GAUNTLET_GAMES_FOR_PROMOTION}",
+        )
     if evaluation.aborted_rate > max_aborted_rate:
-        return (
-            f"aborted rate {evaluation.aborted_rate:.2%} exceeds "
-            f"limit {max_aborted_rate:.2%}"
+        blockers.append(
+            f"aborted_rate: {evaluation.aborted_rate:.4f} exceeds max_aborted_rate {max_aborted_rate:.4f}",
         )
     baseline_scores = [
         evaluation.strategy_scores[baseline]
@@ -333,18 +390,30 @@ def _promotion_blocker(
         if baseline in evaluation.strategy_scores
     ]
     if baseline_scores and evaluation.candidate_score <= max(baseline_scores):
-        return "candidate did not beat all baselines"
+        best_base = max(baseline_scores)
+        blockers.append(
+            f"baseline_gate: candidate_score={evaluation.candidate_score:.6f} "
+            f"<= best_baseline={best_base:.6f}",
+        )
     if current is None:
-        return None
+        return blockers
 
     previous_score = evaluation.strategy_scores.get(_strategy_spec(current.checkpoint_path))
     if previous_score is None:
-        return "current champion was not evaluated with the candidate"
-    if evaluation.candidate_score <= previous_score:
-        return "candidate did not beat the current champion"
+        blockers.append(
+            "champion_gate: current champion missing from tournament summaries "
+            "(candidate tournament must include the seated champion)",
+        )
+    elif evaluation.candidate_score <= previous_score:
+        blockers.append(
+            f"champion_gate: candidate_score={evaluation.candidate_score:.6f} "
+            f"<= champion_score={previous_score:.6f}",
+        )
     if _worse_outcome_profile(evaluation, current):
-        return "candidate worsened champion outcome guardrails"
-    return None
+        blockers.append(
+            "outcome_regression: stalemate_rate or max_turn_rate worse than recorded champion metadata",
+        )
+    return blockers
 
 
 def _worse_outcome_profile(evaluation: EvaluationResult, current: ChampionEntry) -> bool:

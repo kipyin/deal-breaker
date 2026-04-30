@@ -244,7 +244,7 @@ def test_promote_champion_requires_current_champion_in_evaluation(tmp_path: Path
     decision = promote_champion(champions_path, evaluation, checkpoint_path="new.pt")
 
     assert decision.promoted is False
-    assert "current champion was not evaluated" in decision.reason
+    assert "champion_gate:" in decision.reason
     assert load_champions_manifest(champions_path)[5].checkpoint_path == "old.pt"
 
 
@@ -264,5 +264,5 @@ def test_promote_champion_rejects_excessive_aborted_games(tmp_path: Path) -> Non
     )
 
     assert decision.promoted is False
-    assert "aborted rate" in decision.reason
+    assert "aborted_rate:" in decision.reason
     assert load_champions_manifest(champions_path)[3] is None

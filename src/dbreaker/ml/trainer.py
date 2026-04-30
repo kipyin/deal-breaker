@@ -4,13 +4,14 @@ import dataclasses
 import json
 import multiprocessing as mp
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from dbreaker.experiments.league import merge_training_neural_weights
 from dbreaker.ml.checkpoint import LoadedCheckpoint, load_checkpoint, save_checkpoint
 from dbreaker.ml.model import (
     PolicyValueNetwork,
@@ -24,6 +25,7 @@ from dbreaker.ml.model import (
 from dbreaker.ml.trajectory import (
     SelfPlayTrajectory,
     collect_training_trajectory,
+    per_step_dense_shaping_reward,
     sparse_terminal_rewards_for_steps,
 )
 
@@ -53,6 +55,13 @@ class PPOConfig:
         "set_completion",
     )
     champion_checkpoint: Path | None = None
+    policy_pool_manifest: Path | None = None
+    opponent_neural_checkpoints: tuple[tuple[Path, float], ...] = ()
+    reward_terminal_rank_weight: float = 1.0
+    reward_completed_set_delta_weight: float = 0.0
+    reward_asset_value_delta_weight: float = 0.0
+    reward_rent_payment_delta_weight: float = 0.0
+    reward_opponent_completed_set_delta_weight: float = 0.0
     fast_single_learner: bool = False
     rollout_max_steps_per_game: int | None = None
     max_policy_actions: int | None = None
@@ -99,6 +108,7 @@ class TrainingStats:
     continued_from: str | None = None
     game_seed_offset: int = 0
     training_device: str | None = None
+    reward_component_means: dict[str, float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -163,6 +173,8 @@ class TrainingStats:
             payload["per_game"] = [dict(row) for row in self.per_game]
         if self.training_device is not None:
             payload["training_device"] = self.training_device
+        if self.reward_component_means is not None:
+            payload["reward_component_means"] = dict(self.reward_component_means)
         return payload
 
 
@@ -209,6 +221,16 @@ def _effective_rollout_batch_games(config: PPOConfig) -> int:
     return max(1, capped)
 
 
+def _resolve_opponent_neural_for_training(config: PPOConfig) -> tuple[tuple[Path, float], ...]:
+    if config.opponent_neural_checkpoints:
+        return config.opponent_neural_checkpoints
+    return merge_training_neural_weights(
+        champion_checkpoint=config.champion_checkpoint,
+        policy_pool_manifest=config.policy_pool_manifest,
+        player_count=config.player_count,
+    )
+
+
 def _validate_rollout_config(config: PPOConfig) -> None:
     if config.rollout_target_steps is not None and config.rollout_target_steps < 1:
         raise ValueError("rollout_target_steps must be at least 1")
@@ -232,6 +254,12 @@ def _ppo_config_to_dict(config: PPOConfig) -> dict[str, Any]:
     ck = payload.get("champion_checkpoint")
     if ck is not None:
         payload["champion_checkpoint"] = str(ck)
+    ppm = payload.get("policy_pool_manifest")
+    if ppm is not None:
+        payload["policy_pool_manifest"] = str(ppm)
+    payload["opponent_neural_checkpoints"] = [
+        [str(path), float(weight)] for path, weight in config.opponent_neural_checkpoints
+    ]
     return payload
 
 
@@ -322,6 +350,9 @@ def refresh_trajectory_policy_outputs(
         fast_single_learner=trajectory.fast_single_learner,
         legal_action_counts_before_pruning=trajectory.legal_action_counts_before_pruning,
         legal_action_counts_after_pruning=trajectory.legal_action_counts_after_pruning,
+        ppo_step_rewards=trajectory.ppo_step_rewards,
+        reward_totals=trajectory.reward_totals,
+        reward_component_sums=trajectory.reward_component_sums,
     )
 
 
@@ -337,6 +368,11 @@ def _train_rollout_worker(args: tuple[dict[str, Any], int]) -> SelfPlayTrajector
     game_seed = None if seed is None else int(seed + game_index + cfg["game_seed_offset"])
     champ = cfg.get("champion_checkpoint")
     champ_path = Path(champ) if isinstance(champ, str) else None
+    onc_raw = cfg.get("opponent_neural_checkpoints") or []
+    opponent_neural: list[tuple[Path, float]] = []
+    for pair in onc_raw:
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+            opponent_neural.append((Path(str(pair[0])), float(pair[1])))
     rollout_cap = cfg.get("rollout_max_steps_per_game")
     max_policy = cfg.get("max_policy_actions")
     pk_raw = cfg.get("policy_top_k", 3)
@@ -350,12 +386,20 @@ def _train_rollout_worker(args: tuple[dict[str, Any], int]) -> SelfPlayTrajector
         opponent_mix_prob=float(cfg["opponent_mix_prob"]),
         opponent_strategies=tuple(cfg["opponent_strategies"]),
         champion_checkpoint=champ_path,
+        opponent_neural_checkpoints=tuple(opponent_neural),
         single_learner=bool(cfg["fast_single_learner"]),
         rollout_max_steps_per_game=int(rollout_cap) if rollout_cap is not None else None,
         max_policy_actions=int(max_policy) if max_policy is not None else None,
         policy_top_k=policy_top_k,
         telemetry_jsonl=None,
         telemetry_game_index=None,
+        reward_terminal_rank_weight=float(cfg.get("reward_terminal_rank_weight", 1.0)),
+        reward_completed_set_delta_weight=float(cfg.get("reward_completed_set_delta_weight", 0.0)),
+        reward_asset_value_delta_weight=float(cfg.get("reward_asset_value_delta_weight", 0.0)),
+        reward_rent_payment_delta_weight=float(cfg.get("reward_rent_payment_delta_weight", 0.0)),
+        reward_opponent_completed_set_delta_weight=float(
+            cfg.get("reward_opponent_completed_set_delta_weight", 0.0),
+        ),
     )
 
 
@@ -395,6 +439,7 @@ def _collect_rollout_batch(
         slots_left = roll_batch - len(batch_trajs)
 
         if config.rollout_workers <= 1:
+            onc = _resolve_opponent_neural_for_training(config)
             trajectory = collect_training_trajectory(
                 policy,
                 player_count=config.player_count,
@@ -404,12 +449,18 @@ def _collect_rollout_batch(
                 opponent_mix_prob=config.opponent_mix_prob,
                 opponent_strategies=config.opponent_strategies,
                 champion_checkpoint=config.champion_checkpoint,
+                opponent_neural_checkpoints=onc,
                 single_learner=config.fast_single_learner,
                 rollout_max_steps_per_game=config.rollout_max_steps_per_game,
                 max_policy_actions=config.max_policy_actions,
                 policy_top_k=config.policy_top_k,
                 telemetry_jsonl=telemetry_jsonl,
                 telemetry_game_index=game_index,
+                reward_terminal_rank_weight=config.reward_terminal_rank_weight,
+                reward_completed_set_delta_weight=config.reward_completed_set_delta_weight,
+                reward_asset_value_delta_weight=config.reward_asset_value_delta_weight,
+                reward_rent_payment_delta_weight=config.reward_rent_payment_delta_weight,
+                reward_opponent_completed_set_delta_weight=config.reward_opponent_completed_set_delta_weight,
             )
             batch_trajs.append(trajectory)
             if on_game_complete is not None:
@@ -421,6 +472,8 @@ def _collect_rollout_batch(
 
         wave = min(slots_left, config.games - game_index)
         static_cfg = dict(_ppo_config_to_dict(config))
+        onc = _resolve_opponent_neural_for_training(config)
+        static_cfg["opponent_neural_checkpoints"] = [[str(p), float(w)] for p, w in onc]
         static_cfg["seed"] = seed
         static_cfg["game_seed_offset"] = game_seed_offset
         static_cfg["model_config"] = policy.model_config()
@@ -461,13 +514,26 @@ def _ppo_update_from_trajectories(
     device = next(policy.parameters()).device
     sparse_parts: list[float] = []
     for trajectory in trajectories:
+        if trajectory.ppo_step_rewards and len(trajectory.ppo_step_rewards) == len(
+            trajectory.steps,
+        ):
+            sparse_parts.extend(trajectory.ppo_step_rewards)
+            continue
         reward_by_player = {
             step.player_id: reward
             for step, reward in zip(trajectory.steps, trajectory.rewards, strict=True)
         }
-        sparse_parts.extend(
-            sparse_terminal_rewards_for_steps(trajectory.steps, reward_by_player)
-        )
+        sparse_vec = sparse_terminal_rewards_for_steps(trajectory.steps, reward_by_player)
+        for t, step in enumerate(trajectory.steps):
+            term = sparse_vec[t] * config.reward_terminal_rank_weight
+            dense = per_step_dense_shaping_reward(
+                step,
+                reward_completed_set_delta_weight=config.reward_completed_set_delta_weight,
+                reward_asset_value_delta_weight=config.reward_asset_value_delta_weight,
+                reward_rent_payment_delta_weight=config.reward_rent_payment_delta_weight,
+                reward_opponent_completed_set_delta_weight=config.reward_opponent_completed_set_delta_weight,
+            )
+            sparse_parts.append(term + dense)
     old_log_probs = torch.tensor(
         [step.log_prob for step in steps],
         dtype=torch.float32,
@@ -619,6 +685,7 @@ def train_self_play(
     ppo_update_seconds = 0.0
 
     per_game_rows: list[dict[str, Any]] = []
+    reward_sum_components: defaultdict[str, float] = defaultdict(float)
     ended_counts: Counter[str] = Counter()
     lengths: list[int] = []
     rewards_dense_all: list[float] = []
@@ -682,6 +749,9 @@ def train_self_play(
             ):
                 legal_sum += legal_n
                 legal_max = max(legal_max, legal_n)
+            if traj.reward_component_sums:
+                for key, val in traj.reward_component_sums.items():
+                    reward_sum_components[key] += float(val)
 
         n_chunk = sum(len(traj.steps) for traj in batch_trajs)
         n_steps += n_chunk
@@ -746,6 +816,11 @@ def train_self_play(
     mr_vals = [float(row["mean_reward"]) for row in per_game_rows]
     mr_min = min(mr_vals) if mr_vals else 0.0
     mr_max = max(mr_vals) if mr_vals else 0.0
+    reward_component_means: dict[str, float] | None = None
+    if reward_sum_components and n_steps > 0:
+        reward_component_means = {
+            key: float(val) / float(n_steps) for key, val in reward_sum_components.items()
+        }
 
     stats = TrainingStats(
         games=config.games,
@@ -785,6 +860,7 @@ def train_self_play(
         continued_from=continued_from,
         game_seed_offset=game_seed_offset,
         training_device=str(dev),
+        reward_component_means=reward_component_means,
     )
     if checkpoint_out is not None:
         save_checkpoint(

@@ -39,6 +39,8 @@ class EvalJobRequest(BaseModel):
     max_turns: int = 200
     max_self_play_steps: int = 30_000
     champions_manifest_path: str | None = None
+    policy_pool_manifest_path: str | None = None
+    policy_pool_sample_size: int = Field(default=0, ge=0, le=32)
     promote_if_passes: bool = False
     max_aborted_rate: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -82,6 +84,18 @@ class TrainingJobRequest(BaseModel):
         ]
     )
     champion_checkpoint_id: str | None = None
+    policy_pool_manifest_path: str | None = Field(
+        default=None,
+        description=(
+            "Optional policy pool manifest under the artifact root; when set, weighted "
+            "neural opponents come from this file instead of champion_checkpoint alone."
+        ),
+    )
+    reward_terminal_rank_weight: float = Field(default=1.0, ge=0.0)
+    reward_completed_set_delta_weight: float = Field(default=0.0)
+    reward_asset_value_delta_weight: float = Field(default=0.0)
+    reward_rent_payment_delta_weight: float = Field(default=0.0)
+    reward_opponent_completed_set_delta_weight: float = Field(default=0.0)
     fast_single_learner: bool = Field(
         default=False,
         description="Run one neural learner seat per game and heuristic/champion opponents elsewhere.",
@@ -153,6 +167,10 @@ class RlSearchJobRequest(BaseModel):
         ]
     )
     champion_checkpoint_id: str | None = None
+    policy_pool_manifest_path: str | None = Field(
+        default=None,
+        description="Optional policy pool manifest (artifact-relative) for weighted neural opponents.",
+    )
     fast_single_learner: bool = False
     rollout_max_steps_per_game: int | None = Field(default=None, ge=1)
     max_policy_actions: int | None = Field(default=None, ge=1)

@@ -41,6 +41,9 @@ class TrajectoryStep:
     phase_name: str | None = None
     completed_sets_delta: int | None = None
     asset_value_delta: int | None = None
+    rent_payment_delta: int | None = None
+    opponent_completed_sets_delta: int | None = None
+    reward_telemetry_gaps: tuple[str, ...] = ()
     policy_topk_indices: tuple[int, ...] = ()
     policy_topk_probs: tuple[float, ...] = ()
 
@@ -55,6 +58,11 @@ class SelfPlayTrajectory:
     fast_single_learner: bool = False
     legal_action_counts_before_pruning: tuple[int, ...] = ()
     legal_action_counts_after_pruning: tuple[int, ...] = ()
+    #: Per learner-step PPO targets (terminal sparse + optional dense shaping).
+    ppo_step_rewards: tuple[float, ...] = ()
+    #: Aggregates for diagnostics (sums of weighted shaping / sparse masses).
+    reward_totals: tuple[tuple[str, float], ...] = ()
+    reward_component_sums: dict[str, float] | None = None
 
 
 def prune_policy_actions(
@@ -117,6 +125,89 @@ def sparse_terminal_rewards_for_steps(
     return tuple(sparse)
 
 
+def aggregate_reward_component_sums(steps: Sequence[TrajectoryStep]) -> dict[str, float]:
+    """Sum absolute shaping telemetry across learner steps (unweighted raw deltas)."""
+    sums = {
+        "completed_set_delta": 0.0,
+        "asset_value_delta": 0.0,
+        "rent_payment_delta": 0.0,
+        "opponent_completed_set_delta": 0.0,
+    }
+    for step in steps:
+        if step.completed_sets_delta is not None:
+            sums["completed_set_delta"] += float(step.completed_sets_delta)
+        if step.asset_value_delta is not None:
+            sums["asset_value_delta"] += float(step.asset_value_delta)
+        if step.rent_payment_delta is not None:
+            sums["rent_payment_delta"] += float(step.rent_payment_delta)
+        if step.opponent_completed_sets_delta is not None:
+            sums["opponent_completed_set_delta"] += float(step.opponent_completed_sets_delta)
+    return sums
+
+
+ASSET_VALUE_SHAPING_SCALE = 1e-3
+
+
+def per_step_dense_shaping_reward(
+    step: TrajectoryStep,
+    *,
+    reward_completed_set_delta_weight: float,
+    reward_asset_value_delta_weight: float,
+    reward_rent_payment_delta_weight: float,
+    reward_opponent_completed_set_delta_weight: float,
+) -> float:
+    """Dense per-step shaping from recorded deltas (rent/payment skipped if unknown)."""
+    total = 0.0
+    if step.completed_sets_delta is not None:
+        total += reward_completed_set_delta_weight * float(step.completed_sets_delta)
+    if step.asset_value_delta is not None:
+        total += (
+            reward_asset_value_delta_weight
+            * float(step.asset_value_delta)
+            * ASSET_VALUE_SHAPING_SCALE
+        )
+    if step.rent_payment_delta is not None:
+        total += reward_rent_payment_delta_weight * float(step.rent_payment_delta)
+    if step.opponent_completed_sets_delta is not None:
+        total += reward_opponent_completed_set_delta_weight * float(
+            step.opponent_completed_sets_delta
+        )
+    return total
+
+
+def _effective_neural_opponent_pool(
+    champion_checkpoint: Path | None,
+    opponent_neural_checkpoints: tuple[tuple[Path, float], ...],
+) -> tuple[tuple[Path, float], ...]:
+    if opponent_neural_checkpoints:
+        return opponent_neural_checkpoints
+    if champion_checkpoint is not None:
+        return ((champion_checkpoint, 1.0),)
+    return ()
+
+
+def _pick_opponent_strategy_name(
+    rng: random.Random,
+    opponent_strategies: tuple[str, ...],
+    neural_pool: tuple[tuple[Path, float], ...],
+) -> str:
+    choices: list[tuple[str, float]] = [(h, 1.0) for h in opponent_strategies]
+    choices.extend((f"neural:{path}", w) for path, w in neural_pool)
+    if not choices:
+        raise ValueError("opponent_strategies must not be empty in single-learner mode")
+    total = sum(max(0.0, w) for _, w in choices)
+    if total <= 0.0:
+        pick = rng.choice(choices)[0]
+        return pick
+    r = rng.random() * total
+    acc = 0.0
+    for name, w in choices:
+        acc += max(0.0, w)
+        if r <= acc:
+            return name
+    return choices[-1][0]
+
+
 def collect_training_trajectory(
     model: Any,
     *,
@@ -132,12 +223,18 @@ def collect_training_trajectory(
         "set_completion",
     ),
     champion_checkpoint: Path | None = None,
+    opponent_neural_checkpoints: tuple[tuple[Path, float], ...] = (),
     single_learner: bool = False,
     rollout_max_steps_per_game: int | None = None,
     max_policy_actions: int | None = None,
     policy_top_k: int | None = 3,
     telemetry_jsonl: Path | None = None,
     telemetry_game_index: int | None = None,
+    reward_terminal_rank_weight: float = 1.0,
+    reward_completed_set_delta_weight: float = 0.0,
+    reward_asset_value_delta_weight: float = 0.0,
+    reward_rent_payment_delta_weight: float = 0.0,
+    reward_opponent_completed_set_delta_weight: float = 0.0,
 ) -> SelfPlayTrajectory:
     """Roll out a game; optionally mix in heuristic / champion opponents for one learner seat."""
     torch = require_torch()
@@ -150,22 +247,23 @@ def collect_training_trajectory(
     rng = random.Random(seed if seed is not None else 0xC0FFEE)
     use_mix = single_learner or (opponent_mix_prob > 0.0 and rng.random() < opponent_mix_prob)
     train_net = NeuralStrategy(_TRAINING_NEURAL_PATH, model=model)
+    neural_pool = _effective_neural_opponent_pool(champion_checkpoint, opponent_neural_checkpoints)
 
     strategies: list[BaseStrategy] | None = None
     learner_seat = 0
     if use_mix:
         learner_seat = rng.randint(0, player_count - 1)
-        pool = list(opponent_strategies)
-        if champion_checkpoint is not None:
-            pool.append(f"neural:{champion_checkpoint}")
-        if not pool:
-            raise ValueError("opponent_strategies must not be empty in single-learner mode")
+        if not opponent_strategies and not neural_pool:
+            raise ValueError(
+                "opponent_strategies must not be empty unless a neural opponent pool is provided",
+            )
         strategies = []
         for seat in range(player_count):
             if seat == learner_seat:
                 strategies.append(train_net)
             else:
-                strategies.append(create_strategy(rng.choice(pool)))
+                name = _pick_opponent_strategy_name(rng, opponent_strategies, neural_pool)
+                strategies.append(create_strategy(name))
 
     game = Game.new(player_count=player_count, seed=seed, record_transitions=False)
     learner_id: str | None
@@ -205,7 +303,17 @@ def collect_training_trajectory(
             learner_state = game.state.players[player_id]
             completed_before = learner_state.completed_set_count()
             assets_before = learner_state.asset_value
+            opp_sets_before = (
+                sum(
+                    game.state.players[pid].completed_set_count()
+                    for pid in game.state.player_order
+                    if pid != player_id
+                )
+                if learner_id is None or player_id == learner_id
+                else 0
+            )
             phase_name = observation.phase.value
+            gap_flags: tuple[str, ...] = ("rent_payment_delta",)
             batch = encode_legal_actions(observation, policy_actions)
             tk_arg = policy_top_k if (policy_top_k is not None and policy_top_k > 0) else None
             with torch.inference_mode():
@@ -222,6 +330,12 @@ def collect_training_trajectory(
             learner_after = game.state.players[player_id]
             delta_sets = learner_after.completed_set_count() - completed_before
             delta_assets = learner_after.asset_value - assets_before
+            opp_sets_after = sum(
+                game.state.players[pid].completed_set_count()
+                for pid in game.state.player_order
+                if pid != player_id
+            )
+            opp_delta = opp_sets_after - opp_sets_before
             step_row = TrajectoryStep(
                 player_id=player_id,
                 batch=batch,
@@ -232,6 +346,9 @@ def collect_training_trajectory(
                 phase_name=phase_name,
                 completed_sets_delta=delta_sets,
                 asset_value_delta=delta_assets,
+                rent_payment_delta=None,
+                opponent_completed_sets_delta=opp_delta,
+                reward_telemetry_gaps=gap_flags,
                 policy_topk_indices=selection.policy_topk_indices,
                 policy_topk_probs=selection.policy_topk_probs,
             )
@@ -245,6 +362,9 @@ def collect_training_trajectory(
                     "phase": phase_name,
                     "completed_sets_delta": delta_sets,
                     "asset_value_delta": delta_assets,
+                    "rent_payment_delta": None,
+                    "opponent_completed_sets_delta": opp_delta,
+                    "reward_telemetry_gaps": list(gap_flags),
                     "policy_topk_indices": list(selection.policy_topk_indices),
                     "policy_topk_probs": list(selection.policy_topk_probs),
                 }
@@ -265,6 +385,31 @@ def collect_training_trajectory(
     rankings = tuple(_player_rankings(game))
     reward_by_player = _reward_by_player(rankings)
     rewards = tuple(reward_by_player[step.player_id] for step in steps)
+    rc_sums = aggregate_reward_component_sums(steps) if steps else None
+    sparse_terminal = sparse_terminal_rewards_for_steps(steps, reward_by_player)
+    sparse_scaled = tuple(reward_terminal_rank_weight * float(s) for s in sparse_terminal)
+    dense_shapes: list[float] = []
+    if steps:
+        for step in steps:
+            dense_shapes.append(
+                per_step_dense_shaping_reward(
+                    step,
+                    reward_completed_set_delta_weight=reward_completed_set_delta_weight,
+                    reward_asset_value_delta_weight=reward_asset_value_delta_weight,
+                    reward_rent_payment_delta_weight=reward_rent_payment_delta_weight,
+                    reward_opponent_completed_set_delta_weight=reward_opponent_completed_set_delta_weight,
+                )
+            )
+    ppo_sr = tuple(
+        sparse_scaled[i] + dense_shapes[i]
+        for i in range(len(steps))
+    )
+    rtot_sparse = sum(sparse_scaled) if sparse_scaled else 0.0
+    rtot_dense = sum(dense_shapes) if dense_shapes else 0.0
+    reward_totals = (
+        ("ppo_terminal_sparse_mass", float(rtot_sparse)),
+        ("ppo_dense_shaping_mass", float(rtot_dense)),
+    )
     return SelfPlayTrajectory(
         steps=tuple(steps),
         rewards=rewards,
@@ -274,6 +419,9 @@ def collect_training_trajectory(
         fast_single_learner=single_learner,
         legal_action_counts_before_pruning=tuple(legal_before_counts),
         legal_action_counts_after_pruning=tuple(legal_after_counts),
+        ppo_step_rewards=ppo_sr,
+        reward_totals=reward_totals,
+        reward_component_sums=rc_sums,
     )
 
 

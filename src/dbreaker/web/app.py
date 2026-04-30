@@ -169,6 +169,8 @@ def create_app(
                 max_turns=payload.max_turns,
                 max_self_play_steps=payload.max_self_play_steps,
                 champions_manifest_path=payload.champions_manifest_path,
+                policy_pool_manifest_path=payload.policy_pool_manifest_path,
+                policy_pool_sample_size=payload.policy_pool_sample_size,
                 promote_if_passes=payload.promote_if_passes,
                 max_aborted_rate=payload.max_aborted_rate,
             ),

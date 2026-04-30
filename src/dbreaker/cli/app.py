@@ -13,6 +13,10 @@ from loguru import logger
 
 from dbreaker.cli.play import run_interactive_play, run_scripted_play
 from dbreaker.experiments.benchmark import run_benchmark, run_neural_training_benchmark
+from dbreaker.experiments.league import (
+    load_policy_pool_per_player,
+    pool_entries_to_ppo_weights,
+)
 from dbreaker.experiments.rl_search import (
     EvaluationConfig,
     RLSearchConfig,
@@ -338,6 +342,42 @@ def train(
             help="Optional checkpoint path added to the opponent pool when mixing.",
         ),
     ] = None,
+    policy_pool_manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--policy-pool-manifest",
+            help=(
+                "JSON manifest of neural checkpoints + weights for opponent sampling "
+                "(overrides sole --champion when entries exist for this player count)."
+            ),
+        ),
+    ] = None,
+    reward_terminal_rank: float = typer.Option(
+        1.0,
+        "--reward-terminal-rank",
+        min=0.0,
+        help="Weight on sparse terminal rank reward (default preserves legacy behavior).",
+    ),
+    reward_completed_set: float = typer.Option(
+        0.0,
+        "--reward-completed-set",
+        help="Weight on per-step completed-set delta shaping.",
+    ),
+    reward_asset_value: float = typer.Option(
+        0.0,
+        "--reward-asset-value",
+        help="Weight on scaled asset_value_delta shaping.",
+    ),
+    reward_rent_payment: float = typer.Option(
+        0.0,
+        "--reward-rent-payment",
+        help="Weight on rent/payment deltas when observable.",
+    ),
+    reward_opponent_completed_set: float = typer.Option(
+        0.0,
+        "--reward-opponent-completed-set",
+        help="Weight on opponents' aggregate completed-set threat delta.",
+    ),
     fast_single_learner: bool = typer.Option(
         False,
         "--fast-single-learner",
@@ -454,9 +494,10 @@ def train(
         metrics_out,
     )
     logger.debug(
-        "train opponents={!r} champion={} from_checkpoint={}",
+        "train opponents={!r} champion={} policy_pool_manifest={} from_checkpoint={}",
         opponents,
         champion,
+        policy_pool_manifest,
         from_checkpoint,
     )
     try:
@@ -480,6 +521,13 @@ def train(
             )
 
         pk = None if policy_top_k == 0 else policy_top_k
+        onc: tuple[tuple[Path, float], ...] = ()
+        champ_path = champion
+        if policy_pool_manifest is not None:
+            entries = load_policy_pool_per_player(policy_pool_manifest, players)
+            if entries:
+                onc = pool_entries_to_ppo_weights(entries)
+                champ_path = None
         config = trainer_module.PPOConfig(
             games=games,
             rollout_batch_games=rollout_batch_games,
@@ -492,7 +540,13 @@ def train(
             gamma=gamma,
             opponent_mix_prob=opponent_mix,
             opponent_strategies=_parse_comma_strs(opponents),
-            champion_checkpoint=champion,
+            champion_checkpoint=champ_path,
+            opponent_neural_checkpoints=onc,
+            reward_terminal_rank_weight=reward_terminal_rank,
+            reward_completed_set_delta_weight=reward_completed_set,
+            reward_asset_value_delta_weight=reward_asset_value,
+            reward_rent_payment_delta_weight=reward_rent_payment,
+            reward_opponent_completed_set_delta_weight=reward_opponent_completed_set,
             fast_single_learner=fast_single_learner,
             rollout_max_steps_per_game=rollout_max_steps_per_game,
             max_policy_actions=max_policy_actions,
@@ -612,6 +666,13 @@ def rl_search(
         Path | None,
         typer.Option("--champion", help="Optional champion checkpoint for opponent mixing."),
     ] = None,
+    policy_pool_manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--policy-pool-manifest",
+            help="Optional JSON manifest for weighted neural opponents (per player count).",
+        ),
+    ] = None,
     fast_single_learner: bool = typer.Option(False, "--fast-single-learner"),
     rollout_max_steps_per_game: Annotated[
         int | None,
@@ -665,10 +726,11 @@ def rl_search(
         opponent_mix,
     )
     logger.debug(
-        "rl-search players={!r} opponents={!r} champion={}",
+        "rl-search players={!r} opponents={!r} champion={} policy_pool_manifest={}",
         players,
         opponents,
         champion,
+        policy_pool_manifest,
     )
     try:
         import_module("dbreaker.ml.trainer")
@@ -692,6 +754,7 @@ def rl_search(
             opponent_mix_prob=opponent_mix,
             opponent_strategies=_parse_comma_strs(opponents),
             champion_checkpoint=champion,
+            policy_pool_manifest=policy_pool_manifest,
             fast_single_learner=fast_single_learner,
             rollout_max_steps_per_game=rollout_max_steps_per_game,
             max_policy_actions=max_policy_actions,
@@ -727,6 +790,27 @@ def rl_evaluate(
     champions: Annotated[
         Path | None,
         typer.Option("--champions", help="champions.json for previous-best comparison."),
+    ] = None,
+    policy_pool_manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--policy-pool-manifest",
+            help="Optional pool manifest; sample extra neural opponents into the gauntlet.",
+        ),
+    ] = None,
+    policy_pool_sample: int = typer.Option(
+        0,
+        "--policy-pool-sample",
+        min=0,
+        max=32,
+        help="Number of distinct pool opponents to draw into the tournament (0=off).",
+    ),
+    append_to_policy_pool: Annotated[
+        Path | None,
+        typer.Option(
+            "--append-to-policy-pool",
+            help="When promoting, append the checkpoint entry to this pool manifest.",
+        ),
     ] = None,
     promote: bool = typer.Option(
         False,
@@ -764,6 +848,8 @@ def rl_evaluate(
             candidate=candidate,
             baselines=_parse_comma_strs(baselines),
             champions_path=champions,
+            policy_pool_manifest=policy_pool_manifest,
+            policy_pool_sample_size=policy_pool_sample,
             games=games,
             seed=seed,
             max_turns=max_turns,
@@ -777,6 +863,7 @@ def rl_evaluate(
             result,
             checkpoint_path=_promotion_checkpoint(candidate, checkpoint_path),
             metadata={"cli": "rl-evaluate"},
+            policy_pool_path=append_to_policy_pool,
             max_aborted_rate=max_aborted_rate,
         )
         typer.echo(f"promote: {decision.promoted} ({decision.reason})")

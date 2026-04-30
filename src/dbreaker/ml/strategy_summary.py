@@ -40,6 +40,11 @@ def summarize_training_metrics(
     if isinstance(ended_by, dict) and ended_by:
         eb = ", ".join(f"`{k}`={v}" for k, v in sorted(ended_by.items()))
         lines.append(f"- Outcome buckets: {eb}")
+    rc = metrics.get("reward_component_means")
+    if isinstance(rc, dict) and rc:
+        lines.append("- Reward shaping telemetry (mean per learner step):")
+        for key in sorted(rc.keys()):
+            lines.append(f"  - `{key}`: `{float(rc[key]):.6f}`")
     device = metrics.get("training_device")
     if isinstance(device, str) and device:
         lines.append(f"- Device: `{device}`")

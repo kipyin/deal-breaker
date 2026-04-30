@@ -30,10 +30,15 @@ def training_artifact_ids(
 
 
 def ppo_config_from_request(
-    body: TrainingJobRequest, champion_checkpoint: Path | None
+    body: TrainingJobRequest,
+    champion_checkpoint: Path | None,
+    *,
+    policy_pool_manifest: Path | None = None,
 ) -> PPOConfig:
     pk = body.policy_top_k
     policy_top_k = None if pk is None or pk == 0 else pk
+    ppm_raw = getattr(body, "policy_pool_manifest_path", None)
+    effective_pool = policy_pool_manifest or (Path(ppm_raw) if ppm_raw else None)
     return PPOConfig(
         games=body.games,
         rollout_batch_games=body.rollout_batch_games,
@@ -51,6 +56,13 @@ def ppo_config_from_request(
         opponent_mix_prob=body.opponent_mix_prob,
         opponent_strategies=tuple(body.opponent_strategies),
         champion_checkpoint=champion_checkpoint,
+        policy_pool_manifest=effective_pool,
+        opponent_neural_checkpoints=(),
+        reward_terminal_rank_weight=body.reward_terminal_rank_weight,
+        reward_completed_set_delta_weight=body.reward_completed_set_delta_weight,
+        reward_asset_value_delta_weight=body.reward_asset_value_delta_weight,
+        reward_rent_payment_delta_weight=body.reward_rent_payment_delta_weight,
+        reward_opponent_completed_set_delta_weight=body.reward_opponent_completed_set_delta_weight,
         fast_single_learner=body.fast_single_learner,
         rollout_max_steps_per_game=body.rollout_max_steps_per_game,
         max_policy_actions=body.max_policy_actions,
@@ -73,7 +85,11 @@ def write_training_manifest(
 
 
 def rl_search_config(
-    body: RlSearchJobRequest, output_dir: Path, champion_checkpoint: Path | None
+    body: RlSearchJobRequest,
+    output_dir: Path,
+    champion_checkpoint: Path | None,
+    *,
+    policy_pool_manifest: Path | None = None,
 ) -> RLSearchConfig:
     counts = tuple(body.player_counts)
     bad = [c for c in counts if c not in VALID_PLAYER_COUNTS]
@@ -81,6 +97,10 @@ def rl_search_config(
         raise ValueError(
             f"invalid player_counts {bad}, expected subset of {list(VALID_PLAYER_COUNTS)}"
         )
+    ppm_raw = getattr(body, "policy_pool_manifest_path", None)
+    effective_pool = policy_pool_manifest or (
+        Path(ppm_raw) if ppm_raw else None
+    )
     return RLSearchConfig(
         output_dir=output_dir,
         player_counts=counts,
@@ -97,6 +117,7 @@ def rl_search_config(
         opponent_mix_prob=body.opponent_mix_prob,
         opponent_strategies=tuple(body.opponent_strategies),
         champion_checkpoint=champion_checkpoint,
+        policy_pool_manifest=effective_pool,
         fast_single_learner=body.fast_single_learner,
         rollout_max_steps_per_game=body.rollout_max_steps_per_game,
         max_policy_actions=body.max_policy_actions,
