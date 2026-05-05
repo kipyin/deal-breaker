@@ -287,3 +287,21 @@ def create_standard_deck() -> list[Card]:
         )
 
     return cards
+
+
+def _natural_property_counts_from_deck() -> dict[PropertyColor, int]:
+    tallies: dict[PropertyColor, int] = {}
+    for card in create_standard_deck():
+        if card.kind == CardKind.PROPERTY and card.color is not None:
+            tallies[card.color] = tallies.get(card.color, 0) + 1
+    return tallies
+
+
+NATURAL_PROPERTY_COUNT_BY_COLOR: dict[PropertyColor, int] = _natural_property_counts_from_deck()
+
+
+def _wild_property_deck_count() -> int:
+    return sum(1 for card in create_standard_deck() if card.kind == CardKind.WILD_PROPERTY)
+
+
+WILD_PROPERTY_DECK_TOTAL: int = _wild_property_deck_count()
