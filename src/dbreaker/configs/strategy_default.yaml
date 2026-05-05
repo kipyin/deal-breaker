@@ -6,4 +6,5 @@ strategies:
     - aggressive
     - defensive
     - set_completion
+    - human_like
     - omniscient

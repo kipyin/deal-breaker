@@ -8,6 +8,7 @@ from dbreaker.strategies.aggressive import AggressiveStrategy
 from dbreaker.strategies.base import BaseStrategy
 from dbreaker.strategies.defensive import DefensiveStrategy
 from dbreaker.strategies.heuristic import BasicHeuristicStrategy
+from dbreaker.strategies.human_like import HumanLikeStrategy
 from dbreaker.strategies.omniscient import OmniscientBaselineStrategy
 from dbreaker.strategies.random import RandomStrategy
 from dbreaker.strategies.set_completion import SetCompletionStrategy
@@ -41,6 +42,7 @@ def default_registry() -> StrategyRegistry:
     registry.register(DefensiveStrategy.name, DefensiveStrategy)
     registry.register(SetCompletionStrategy.name, SetCompletionStrategy)
     registry.register(OmniscientBaselineStrategy.name, OmniscientBaselineStrategy)
+    registry.register(HumanLikeStrategy.name, HumanLikeStrategy)
     return registry
 
 
