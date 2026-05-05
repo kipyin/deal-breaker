@@ -17,17 +17,26 @@ from dbreaker.engine.actions import (
     RespondJustSayNo,
 )
 from dbreaker.engine.cards import (
+    RENT_LADDER_BY_COLOR,
     SET_SIZE_BY_COLOR,
     ActionSubtype,
     Card,
     CardKind,
     PropertyColor,
-    RENT_LADDER_BY_COLOR,
+)
+from dbreaker.engine.fair_visibility import (
+    hand_attack_steal_counts,
+    natural_property_visible_by_color,
+    unseen_action_subtype_count,
+    unseen_natural_property_by_color,
+    visible_action_subtype_count,
+    wild_property_visible_count,
+    wild_unseen_count,
 )
 from dbreaker.engine.observation import Observation, OpponentObservation
 from dbreaker.engine.rules import GamePhase
 
-FEATURE_SCHEMA_VERSION = "dbreaker-ml-features-v2"
+FEATURE_SCHEMA_VERSION = "dbreaker-ml-features-v3"
 
 _PHASES = tuple(GamePhase)
 _CARD_KINDS = tuple(CardKind)
@@ -71,6 +80,9 @@ _OPPONENT_SLOT_DIM = 5
 # kind one-hot (4) + role (3) + amount/20 + negated + high-stakes
 _PENDING_EXTRA_DIM = len(_PENDING_KINDS) + 3 + 3
 _HAND_HEURISTIC_DIM = 8
+# Per-color unseen/visible natural property, wild vis/unseen, steal cards in hand,
+# unseen/visible counts for high-impact action subtypes (fair deck arithmetic).
+_FAIR_INFORMATION_DIM = len(_SET_COLORS) * 2 + 2 + 3 + 4
 
 OBSERVATION_EXTRA_DIM = (
     len(_SET_COLORS) * _PER_COLOR_OWN_DIM
@@ -78,6 +90,7 @@ OBSERVATION_EXTRA_DIM = (
     + _OPPONENT_SLOT_COUNT * _OPPONENT_SLOT_DIM
     + _PENDING_EXTRA_DIM
     + _HAND_HEURISTIC_DIM
+    + _FAIR_INFORMATION_DIM
 )
 OBSERVATION_FEATURE_DIM = _OBS_BASE_DIM + OBSERVATION_EXTRA_DIM
 
@@ -115,6 +128,7 @@ def encode_observation(observation: Observation) -> tuple[float, ...]:
         + _encode_opponent_slots(observation)
         + _encode_pending_context(observation)
         + _encode_hand_heuristics(observation)
+        + _encode_fair_information(observation)
     )
     assert len(extra) == OBSERVATION_EXTRA_DIM, f"{len(extra)} != {OBSERVATION_EXTRA_DIM}"
     return base + extra
@@ -317,6 +331,40 @@ def _encode_hand_heuristics(observation: Observation) -> tuple[float, ...]:
     )
 
 
+def _encode_fair_information(observation: Observation) -> tuple[float, ...]:
+    unseen = unseen_natural_property_by_color(observation)
+    visible_nat = natural_property_visible_by_color(observation)
+    wild_vis = wild_property_visible_count(observation)
+    wild_remain = wild_unseen_count(observation)
+    db, sly, forced = hand_attack_steal_counts(observation)
+    parts: list[float] = []
+    for color in _SET_COLORS:
+        parts.append(_scale(unseen[color], 5.0))
+    for color in _SET_COLORS:
+        parts.append(_scale(visible_nat[color], 5.0))
+    parts.extend(
+        (
+            _scale(wild_vis, 10.0),
+            _scale(wild_remain, 10.0),
+            _scale(db, 3.0),
+            _scale(sly, 3.0),
+            _scale(forced, 3.0),
+        )
+    )
+    st = ActionSubtype
+    parts.extend(
+        (
+            _scale(unseen_action_subtype_count(observation, st.DEAL_BREAKER), 2.0),
+            _scale(unseen_action_subtype_count(observation, st.JUST_SAY_NO), 3.0),
+            _scale(visible_action_subtype_count(observation, st.DEAL_BREAKER), 2.0),
+            _scale(visible_action_subtype_count(observation, st.JUST_SAY_NO), 3.0),
+        )
+    )
+    out = tuple(parts)
+    assert len(out) == _FAIR_INFORMATION_DIM, f"{len(out)} != {_FAIR_INFORMATION_DIM}"
+    return out
+
+
 def _encode_action_impact(
     observation: Observation, action: Action, *, context: _EncodingContext | None = None
 ) -> tuple[float, ...]:
@@ -376,7 +424,12 @@ def _encode_action_impact(
         card = _visible_card_by_id(observation, action.card_id, context=ctx)
         if card is not None and card.action_subtype is not None:
             st = card.action_subtype
-            if st in (ActionSubtype.DEAL_BREAKER, ActionSubtype.SLY_DEAL, ActionSubtype.FORCED_DEAL):
+            steal_types = (
+                ActionSubtype.DEAL_BREAKER,
+                ActionSubtype.SLY_DEAL,
+                ActionSubtype.FORCED_DEAL,
+            )
+            if st in steal_types:
                 is_attack = 1.0
             if st in (ActionSubtype.HOUSE, ActionSubtype.HOTEL):
                 is_building = 1.0

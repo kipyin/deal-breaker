@@ -18,12 +18,12 @@ def test_observation_features_are_deterministic_and_schema_versioned() -> None:
     first = encode_observation(observation)
     second = encode_observation(observation)
 
-    assert FEATURE_SCHEMA_VERSION == "dbreaker-ml-features-v2"
+    assert FEATURE_SCHEMA_VERSION == "dbreaker-ml-features-v3"
     assert first == second
     assert len(first) == OBSERVATION_FEATURE_DIM
 
 
-def test_v2_observation_includes_extra_block() -> None:
+def test_observation_includes_fair_information_block() -> None:
     game = Game.new(player_count=2, seed=42)
     obs = game.observation_for("P1")
     vec = encode_observation(obs)
